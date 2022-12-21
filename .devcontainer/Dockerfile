@@ -24,7 +24,8 @@ RUN python3 -m  pip install \
     toolz \
     ipyparallel \
     optuna \
-    equinox
+    equinox \
+    einops
 
 
 

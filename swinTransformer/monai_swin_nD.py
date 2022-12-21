@@ -1,3 +1,54 @@
+class MLPBlock(nn.Module):
+    """
+    A multi-layer perceptron block, based on: "Dosovitskiy et al.,
+    An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale <https://arxiv.org/abs/2010.11929>"
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        mlp_dim: int,
+        dropout_rate: float = 0.0,
+        act: Union[Tuple, str] = "GELU",
+        dropout_mode="vit",
+    ) -> None:
+        """
+        Args:
+            hidden_size: dimension of hidden layer.
+            mlp_dim: dimension of feedforward layer. If 0, `hidden_size` will be used.
+            dropout_rate: faction of the input units to drop.
+            act: activation type and arguments. Defaults to GELU.
+            dropout_mode: dropout mode, can be "vit" or "swin".
+                "vit" mode uses two dropout instances as implemented in
+                https://github.com/google-research/vision_transformer/blob/main/vit_jax/models.py#L87
+                "swin" corresponds to one instance as implemented in
+                https://github.com/microsoft/Swin-Transformer/blob/main/models/swin_mlp.py#L23
+        """
+
+        super().__init__()
+
+        if not (0 <= dropout_rate <= 1):
+            raise ValueError("dropout_rate should be between 0 and 1.")
+        mlp_dim = mlp_dim or hidden_size
+        self.linear1 = nn.Linear(hidden_size, mlp_dim)
+        self.linear2 = nn.Linear(mlp_dim, hidden_size)
+        self.fn = get_act_layer(act)
+        self.drop1 = nn.Dropout(dropout_rate)
+        dropout_opt = look_up_option(dropout_mode, SUPPORTED_DROPOUT_MODE)
+        if dropout_opt == "vit":
+            self.drop2 = nn.Dropout(dropout_rate)
+        elif dropout_opt == "swin":
+            self.drop2 = self.drop1
+        else:
+            raise ValueError(f"dropout_mode should be one of {SUPPORTED_DROPOUT_MODE}")
+
+    def forward(self, x):
+        x = self.fn(self.linear1(x))
+        x = self.drop1(x)
+        x = self.linear2(x)
+        x = self.drop2(x)
+        return x
+
 
 
 def window_partition(x, window_size):
@@ -65,6 +116,58 @@ def window_reverse(windows, window_size, dims):
     return x
 
 
+class MLPBlock(nn.Module):
+    """
+    A multi-layer perceptron block, based on: "Dosovitskiy et al.,
+    An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale <https://arxiv.org/abs/2010.11929>"
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        mlp_dim: int,
+        dropout_rate: float = 0.0,
+        act: Union[Tuple, str] = "GELU",
+        dropout_mode="vit",
+    ) -> None:
+        """
+        Args:
+            hidden_size: dimension of hidden layer.
+            mlp_dim: dimension of feedforward layer. If 0, `hidden_size` will be used.
+            dropout_rate: faction of the input units to drop.
+            act: activation type and arguments. Defaults to GELU.
+            dropout_mode: dropout mode, can be "vit" or "swin".
+                "vit" mode uses two dropout instances as implemented in
+                https://github.com/google-research/vision_transformer/blob/main/vit_jax/models.py#L87
+                "swin" corresponds to one instance as implemented in
+                https://github.com/microsoft/Swin-Transformer/blob/main/models/swin_mlp.py#L23
+        """
+
+        super().__init__()
+
+        if not (0 <= dropout_rate <= 1):
+            raise ValueError("dropout_rate should be between 0 and 1.")
+        mlp_dim = mlp_dim or hidden_size
+        self.linear1 = nn.Linear(hidden_size, mlp_dim)
+        self.linear2 = nn.Linear(mlp_dim, hidden_size)
+        self.fn = get_act_layer(act)
+        self.drop1 = nn.Dropout(dropout_rate)
+        dropout_opt = look_up_option(dropout_mode, SUPPORTED_DROPOUT_MODE)
+        if dropout_opt == "vit":
+            self.drop2 = nn.Dropout(dropout_rate)
+        elif dropout_opt == "swin":
+            self.drop2 = self.drop1
+        else:
+            raise ValueError(f"dropout_mode should be one of {SUPPORTED_DROPOUT_MODE}")
+
+    def forward(self, x):
+        x = self.fn(self.linear1(x))
+        x = self.drop1(x)
+        x = self.linear2(x)
+        x = self.drop2(x)
+        return x
+
+
 def get_window_size(x_size, window_size, shift_size=None):
     """Computing window size based on: "Liu et al.,
     Swin Transformer: Hierarchical Vision Transformer using Shifted Windows
@@ -127,44 +230,28 @@ class WindowAttention(nn.Module):
         self.scale = head_dim**-0.5
         mesh_args = torch.meshgrid.__kwdefaults__
 
-        if len(self.window_size) == 3:
-            self.relative_position_bias_table = nn.Parameter(
-                torch.zeros(
-                    (2 * self.window_size[0] - 1) * (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1),
-                    num_heads,
-                )
+        self.relative_position_bias_table = nn.Parameter(
+            torch.zeros(
+                (2 * self.window_size[0] - 1) * (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1),
+                num_heads,
             )
-            coords_d = torch.arange(self.window_size[0])
-            coords_h = torch.arange(self.window_size[1])
-            coords_w = torch.arange(self.window_size[2])
-            if mesh_args is not None:
-                coords = torch.stack(torch.meshgrid(coords_d, coords_h, coords_w, indexing="ij"))
-            else:
-                coords = torch.stack(torch.meshgrid(coords_d, coords_h, coords_w))
-            coords_flatten = torch.flatten(coords, 1)
-            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
-            relative_coords = relative_coords.permute(1, 2, 0).contiguous()
-            relative_coords[:, :, 0] += self.window_size[0] - 1
-            relative_coords[:, :, 1] += self.window_size[1] - 1
-            relative_coords[:, :, 2] += self.window_size[2] - 1
-            relative_coords[:, :, 0] *= (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
-            relative_coords[:, :, 1] *= 2 * self.window_size[2] - 1
-        elif len(self.window_size) == 2:
-            self.relative_position_bias_table = nn.Parameter(
-                torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads)
-            )
-            coords_h = torch.arange(self.window_size[0])
-            coords_w = torch.arange(self.window_size[1])
-            if mesh_args is not None:
-                coords = torch.stack(torch.meshgrid(coords_h, coords_w, indexing="ij"))
-            else:
-                coords = torch.stack(torch.meshgrid(coords_h, coords_w))
-            coords_flatten = torch.flatten(coords, 1)
-            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
-            relative_coords = relative_coords.permute(1, 2, 0).contiguous()
-            relative_coords[:, :, 0] += self.window_size[0] - 1
-            relative_coords[:, :, 1] += self.window_size[1] - 1
-            relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
+        )
+        coords_d = torch.arange(self.window_size[0])
+        coords_h = torch.arange(self.window_size[1])
+        coords_w = torch.arange(self.window_size[2])
+        if mesh_args is not None:
+            coords = torch.stack(torch.meshgrid(coords_d, coords_h, coords_w, indexing="ij"))
+        else:
+            coords = torch.stack(torch.meshgrid(coords_d, coords_h, coords_w))
+        coords_flatten = torch.flatten(coords, 1)
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
+        relative_coords = relative_coords.permute(1, 2, 0).contiguous()
+        relative_coords[:, :, 0] += self.window_size[0] - 1
+        relative_coords[:, :, 1] += self.window_size[1] - 1
+        relative_coords[:, :, 2] += self.window_size[2] - 1
+        relative_coords[:, :, 0] *= (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
+        relative_coords[:, :, 1] *= 2 * self.window_size[2] - 1
+
 
         relative_position_index = relative_coords.sum(-1)
         self.register_buffer("relative_position_index", relative_position_index)

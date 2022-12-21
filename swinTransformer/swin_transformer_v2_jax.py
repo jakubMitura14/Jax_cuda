@@ -103,13 +103,10 @@ def log_space_continuous_position_bias(window_size):
 
 
 
+
 class WindowAttention(nn.Module):
     """ Window based multi-head self attention (W-MSA) module with relative position bias.
         It supports both of shifted and non-shifted window.
-
-    this shifting is kept in order to accomodate to the fact that we need to keep informations
-    around windows borders
-
     Attibutes:
         dim (int): Number of input channels.
         window_size (Tuple[int]): The height and width of the window.
@@ -130,15 +127,16 @@ class WindowAttention(nn.Module):
     
 
     def setup(self):
-        self.log_relative_position_index = log_space_continuous_position_bias(self.window_size)#krowa - not used
+        self.log_relative_position_index = log_space_continuous_position_bias(self.window_size)
         self.cpb = MLP(hidden_dim=512,
                        out_dim=self.num_heads,
                        dropout_rate=0.0,
                        act_layer=nn.relu)
-        #used later as maximum allowed value of attention as far as I get it               
+        # self.logit_scale = nn.Parameter(jnp.log(10 * jnp.ones((self.num_heads, 1, 1))), requires_grad=True)
         self.logit_scale = self.param('tau', nn.initializers.normal(0.02), (1,self.num_heads, 1, 1)) + jnp.log(10)
+        # tau = self.param('tau', nn.initializers.normal(0.02), (1,self.num_heads, 1, 1)) + 1
 
-        # get relative_coords_table as far as I see Inside the window
+        # get relative_coords_table
         relative_coords_h = np.arange(-(self.window_size[0] - 1), self.window_size[0], dtype=np.float32)
         relative_coords_w = np.arange(-(self.window_size[1] - 1), self.window_size[1], dtype=np.float32)
         relative_coords_table = np.expand_dims(np.transpose(np.stack(
@@ -149,20 +147,14 @@ class WindowAttention(nn.Module):
         relative_coords_table[:, :, :, 0] /= (self.window_size[0] - 1)
         relative_coords_table[:, :, :, 1] /= (self.window_size[1] - 1)
         relative_coords_table *= 8  # normalize to -8, 8
-        # still using log but log2 in this case
         self.relative_coords_table = np.sign(relative_coords_table) * np.log2(
             np.abs(relative_coords_table) + 1.0) / np.log2(8)
 
         # get pair-wise relative position index for each token inside the window
-        
-        #TODO( log function should be probably  added )
         coords_h = np.arange(self.window_size[0])
         coords_w = np.arange(self.window_size[1])
-        #meshgrid make sure that we will be able to create pair for each entry at least one
-        #it seems to me sth like cartesian product of indicies        x, y = np.meshgrid(coords_h, coords_w)
-
+        x, y = np.meshgrid(coords_h, coords_w)
         coords = np.stack([y, x])  # 2, Wh, Ww
-        
         coords_flatten = coords.reshape(2, -1)  # 2, Wh*Ww
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
         relative_coords = np.transpose(relative_coords, (1, 2, 0))  # Wh*Ww, Wh*Ww, 2
@@ -170,7 +162,7 @@ class WindowAttention(nn.Module):
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         self.relative_position_index = np.sum(relative_coords, axis=-1)  # Wh*Ww, Wh*Wwbn 
-        # just initialize q and v with or without bias depending on hyperparameter
+
         if self.qkv_bias:
             # keys are ignored
             self.q_linear = nn.Dense(features=self.dim, use_bias=self.qkv_bias, 
@@ -197,11 +189,12 @@ class WindowAttention(nn.Module):
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
         B_, N, C = x.shape
-        #embedding and reshaping queries keys and values
+
         q = jnp.transpose(self.q_linear(x).reshape(B_, N, 1, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))[0]
         k = jnp.transpose(self.k_linear(x).reshape(B_, N, 1, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))[0]
         v = jnp.transpose(self.v_linear(x).reshape(B_, N, 1, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))[0]
-
+        # qkv = jnp.transpose(self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))
+        # q, k, v = qkv[0], qkv[1], qkv[2]
 
         # cosine attention
         qk = jnp.clip(jnp.expand_dims(jnp.linalg.norm(q, axis=-1), axis=-1)@jnp.expand_dims(jnp.linalg.norm(k, axis=-1), axis=-2), a_min=1e-6)
@@ -209,7 +202,6 @@ class WindowAttention(nn.Module):
         attn = attn*jnp.clip(self.logit_scale, a_min=1e-2)
 
         # Log-CPB
-        #nH seem to be dimension for diffrent windows
         relative_position_bias_table = self.cpb(self.relative_coords_table, deterministic=True).reshape(-1, self.num_heads)
         relative_position_bias = relative_position_bias_table[self.relative_position_index.flatten()].reshape(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
@@ -231,9 +223,7 @@ class WindowAttention(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x, deterministic=deterministic)
 
-        return x
-        
-
+        return 
 class IdentityLayer(nn.Module):
     """Identity layer, convenient for giving a name to an array."""
     
