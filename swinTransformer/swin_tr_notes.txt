@@ -1,0 +1,40 @@
+https://www.youtube.com/watch?v=OFTtN3mRieA
+we need hierarchical representations so we start from big pathes and then prograssively smaller and smaller
+
+in order to get diffrent resolution - diffrent size of patches we 
+are merging the patches at the begining of each swin transformer block
+
+important in this all is a shift in attention window so we will 
+be sure that we do not loose the ability of the model to understand well
+the area close to patch borders
+after shifting parts needs to be masked so as far as I get it masking is so important
+
+patch merging is done in 2x2 neighbouring patches
+
+we are also downsampling resolution
+
+In WindowAttention
+    we need to have the relative positional embedding of the pixels within the window relative to each other
+    it is in relative_position_index 
+    and the relative positions of the windows themselves - we have it in relative_coords_table
+
+
+Swin transfoermerV2
+1) PatchEmbedding - some convolution and tokenization of the patches
+2) get through set of blocks that hase same idea
+    a) calculate resolution and shift - where resolution tell how many patches will be 
+        needed to fill the window and shoft is done to learn also the features in the border of patches
+    b) on the basis of shift we will create a mask  so we can ignore parts of windows that are overhanging the image
+        in order to reduce resolution we need also to downsample image by taking every second entry in each dimension of image
+        but we keep all data by adding channels
+        fither down we can reduce the number of channels by projection
+    c) we need also to have the relative positional embeddings of patches in the window
+        and between windows
+    d) now attention is a self attention where queries keys and values are all from input
+        they are created from tokenized window        
+
+
+
+
+Ideas 
+relative embedding can be used to try to avoid resampling    

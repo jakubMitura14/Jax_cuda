@@ -1,0 +1,39 @@
+differentiable augmentations
+https://arxiv.org/abs/2010.11695
+
+specialized attention heads 
+https://www.researchgate.net/publication/365299392_StyleNAT_Giving_Each_Head_a_New_Perspective
+
+pretreining
+https://www.researchgate.net/publication/365486426_Towards_All-in-one_Pre-training_via_Maximizing_Multi-modal_Mutual_Information
+https://arxiv.org/abs/2111.14791
+https://paperswithcode.com/paper/image-as-a-foreign-language-beit-pretraining
+
+
+positional encoding
+https://arxiv.org/pdf/2107.14222.pdf
+https://www.youtube.com/watch?v=vPgZwaIOTgY
+
+Linear transformers
+https://arxiv.org/pdf/2105.08399.pdf
+
+Include spacing information !!
+
+
+BTSwin-Unet: 3D U-shaped Symmetrical Swin Transformer-based Network for Brain Tumor Segmentation with Self-supervised Pre-training
+https://link.springer.com/article/10.1007/s11063-022-10919-1
+https://ieeexplore.ieee.org/document/9868046
+
+multihead cascaded swin transformers 
+https://arxiv.org/pdf/2207.08412.pdf
+https://github.com/ayanglab/SwinMR
+
+
+
+
+3d swin and 3d deformable detr 
+https://github.com/bwittmann/transoar
+https://assets.researchsquare.com/files/rs-2102490/v1_covered.pdf?c=1664808117
+
+postprocessing
+https://paperswithcode.com/paper/contrastive-learning-rivals-masked-image
