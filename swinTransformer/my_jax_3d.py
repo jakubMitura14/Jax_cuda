@@ -1,12 +1,12 @@
 #https://github.com/minyoungpark1/swin_transformer_v2_jax
 #https://github.com/minyoungpark1/swin_transformer_v2_jax/blob/main/models/swin_transformer_jax.py
-###  krowa https://www.researchgate.net/publication/366213226_Position_Embedding_Needs_an_Independent_Layer_Normalization
+###  krowa https://www.researchgate.net/publication/366213226_Position_Embedding_Needs_an_Independent_LayerNormalization
 from flax import linen as nn
 import numpy as np
 from typing import Any, Callable, Optional, Tuple, Type, List
 from jax import lax, random, numpy as jnp
 import einops
-
+import jax 
 Array = Any
 PRNGKey = Any
 Shape = Tuple[int]
@@ -23,7 +23,7 @@ def window_partition(x, window_size):
         x: input tensor.
         window_size: local window size.
     """
-    x_shape = x.size()
+    x_shape = x.shape
     b, d, h, w, c = x_shape
     x = x.reshape(
         b,
@@ -65,6 +65,7 @@ def window_reverse(windows, window_size, dims):
     )
     x = jnp.transpose(x, (0, 1, 4, 2, 5, 3, 6, 7)).reshape(b, d, h, w, -1)
     return x
+
 class MLP(nn.Module):
     """
     based on https://github.com/minyoungpark1/swin_transformer_v2_jax/blob/main/models/swin_transformer_jax.py
@@ -279,19 +280,41 @@ class AdaptiveAvgPool1d(nn.Module):
         avg_pool = nn.avg_pool(inputs=x, window_shape=(kernel_size,), strides=(stride,))
         return avg_pool
 
-def create_attn_mask(dims,shift_size, window_size):
+class myConv3D(nn.Module):
+    """ 
+        Applying a 3D convolution with variable number of channels, what is complicated in 
+        Flax conv
+    """
+    kernel_size :Tuple[int] =(3,3,3)
+    stride :Tuple[int] = (1,1,1)
+    in_channels: int = 1
+    out_channels: int = 1
+    
+
+    def setup(self):
+        self.initializer = jax.nn.initializers.glorot_normal()#xavier initialization
+        self.weight_size = (self.out_channels, self.in_channels) + self.kernel_size
+
+    @nn.compact
+    def __call__(self, x):
+        parr = self.param('parr', lambda rng, shape: self.initializer(rng,self.weight_size), self.weight_size)
+        return  jax.lax.conv_general_dilated(x, parr,self.stride, 'SAME')
+
+
+
+def create_attn_mask(dims,window_size,shift_size):
     """
     as far as I see attention masks are needed to deal with the changing windows
     """
     d, h, w = dims
-    if shift_size > 0:
+    if shift_size[0] > 0:
         img_mask = jnp.zeros((1, d, h, w, 1))
         #we are taking into account the size of window and a shift - so we need to mask all that get out of original image
         cnt = 0
         for d in slice(-window_size[0]), slice(-window_size[0], -shift_size[0]), slice(-shift_size[0], None):
             for h in slice(-window_size[1]), slice(-window_size[1], -shift_size[1]), slice(-shift_size[1], None):
                 for w in slice(-window_size[2]), slice(-window_size[2], -shift_size[2]), slice(-shift_size[2], None):
-                    img_mask[:, d, h, w, :] = cnt
+                    img_mask=img_mask.at[:, d, h, w, :].set(cnt)
                     cnt += 1
         mask_windows = window_partition(img_mask, window_size)
         #so we get the matrix where dim 0 is of len= number of windows and dim 1 the flattened window
@@ -303,13 +326,11 @@ def create_attn_mask(dims,shift_size, window_size):
 
     return attn_mask
 
-
 class SwinTransformerBlock(nn.Module):
     """ Swin Transformer Block.
 
     Args:
         dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resulotion.
         num_heads (int): Number of attention heads.
         window_size Tuple[int]: Window size.
         shift_size (int): Shift size for SW-MSA.
@@ -325,10 +346,9 @@ class SwinTransformerBlock(nn.Module):
 
 
     dim: int
-    input_resolution: Tuple[int]
     num_heads: int
     window_size: Tuple[int]
-    shift_size: int = 0
+    shift_size: Tuple[int]
     mlp_ratio: float = 4
     qkv_bias: Optional[bool] = True
     drop_rate: Optional[float] = 0.0
@@ -344,8 +364,8 @@ class SwinTransformerBlock(nn.Module):
             window_size=self.window_size,
             num_heads=self.num_heads,
             qkv_bias=self.qkv_bias,
-            attn_drop=self.attn_drop_rate,
-            proj_drop=self.drop_path_rate,
+            attn_drop_rate=self.attn_drop_rate,
+            proj_drop_rate=self.drop_path_rate,
         )
 
         self.batch_dropout = nn.Dropout(rate=self.drop_path_rate, broadcast_dims=[1,2]) \
@@ -356,10 +376,13 @@ class SwinTransformerBlock(nn.Module):
                        act_layer=self.act_layer)
 
     def forward_part1(self, x, mask_matrix):
-        x_shape = x.size()
+        x_shape = x.shape
         x = self.norm1(x)
         b, d, h, w, c = x.shape
+        print(f"ggggggggggg { self.window_size}  {self.shift_size}")
         window_size, shift_size = get_window_size((d, h, w), self.window_size, self.shift_size)
+
+        # print(f"sss win transformer block window_size {window_size} shift_size {shift_size}")
         # pad_l = pad_t = pad_d0 = 0
         # pad_d1 = (window_size[0] - d % window_size[0]) % window_size[0]
         # pad_b = (window_size[1] - h % window_size[1]) % window_size[1]
@@ -395,20 +418,20 @@ class SwinTransformerBlock(nn.Module):
         x = x + self.forward_part2(x)
         return x
 
-
 class PatchMerging(nn.Module):
     """The `PatchMerging` module previously defined in v0.9.0."""
-    input_resolution: Tuple[int]
-    dim: int
-    norm_layer: Optional[Type[nn.Module]] = nn.LayerNorm
-    
+    dim:int
+    spatial_dims:int = 3
+    norm_layer :Type[nn.LayerNorm] = nn.LayerNorm
+
+       
     def setup(self):
         self.reduction = nn.Dense(features=2*self.dim, use_bias=False)
         self.norm = self.norm_layer()
     
     @nn.compact
     def __call__(self, x):
-        x_shape = x.size()
+        x_shape = x.shape
         if len(x_shape) == 4:
             return super().forward(x)
         if len(x_shape) != 5:
@@ -429,8 +452,6 @@ class PatchMerging(nn.Module):
         x = self.norm(x)
         x = self.reduction(x)
         return x
-
-
 
 class BasicLayer(nn.Module):
     """
@@ -457,43 +478,62 @@ class BasicLayer(nn.Module):
         downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
     """
     dim: int
-    input_resolution: Tuple[int]
     depth: int
     num_heads: int
+    drop_path: list
     window_size: Tuple[int]
     mlp_ratio: float = 4
     qkv_bias: Optional[bool] = True
     drop_rate: Optional[float] = 0.0
     attn_drop_rate: Optional[float] = 0.0
     drop_path_rate: Optional[float] = 0.0
-    norm_layer: Optional[Type[nn.Module]] = nn.LayerNorm
+    norm_layer = nn.LayerNorm
     downsample: Type[nn.Module] = None# can be patch merging
-
+    drop: float = 0.0
+    attn_drop: float = 0.0
+    use_checkpoint: bool =False
+    
     def setup(self):
-        self.blocks = [SwinTransformerBlock(dim=self.dim, input_resolution=self.input_resolution,
-                                            num_heads=self.num_heads, window_size=self.window_size,
-                                            shift_size=0 if (i % 2 == 0) else min(self.window_size) // 2,
+        self.shift_size = tuple(i // 2 for i in self.window_size)
+        self.no_shift = tuple(0 for i in self.window_size)
+
+        self.blocks = [SwinTransformerBlock(dim=self.dim,
+                                            num_heads=self.num_heads
+                                            ,window_size=self.window_size,
+                                            shift_size=self.no_shift if (i % 2 == 0) else self.shift_size,
                                             mlp_ratio=self.mlp_ratio, qkv_bias=self.qkv_bias,
                                             drop_rate=self.drop_rate, attn_drop_rate=self.attn_drop_rate,
                                             drop_path_rate=self.drop_path_rate[i] \
                                             if isinstance(self.drop_path_rate, tuple) else self.drop_path_rate,
                                             norm_layer=self.norm_layer) 
         for i in range(self.depth)]
+        self.shift_size = tuple(i // 2 for i in self.window_size)
+        self.no_shift = tuple(0 for i in self.window_size)
+
+        # self.blocks = [SwinTransformerBlock(dim=self.dim, input_resolution=self.input_resolution,
+        #                                     num_heads=self.num_heads, window_size=self.window_size,
+        #                                     shift_size=0 if (i % 2 == 0) else min(self.window_size) // 2,
+        #                                     mlp_ratio=self.mlp_ratio, qkv_bias=self.qkv_bias,
+        #                                     drop_rate=self.drop_rate, attn_drop_rate=self.attn_drop_rate,
+        #                                     drop_path_rate=self.drop_path_rate[i] \
+        #                                     if isinstance(self.drop_path_rate, tuple) else self.drop_path_rate,
+        #                                     norm_layer=self.norm_layer) 
+        # for i in range(self.depth)]
 
         # patch merging layer
-        if self.downsample is not None:
-            self.downsample_module = self.downsample(self.input_resolution, dim=self.dim, norm_layer=self.norm_layer)
-        else:
-            self.downsample_module = None
-    def forward(self, x):
-        x_shape = x.size()
+        # if self.downsample is not None:
+        #     self.downsample = self.downsample(dim=self.dim, norm_layer=self.norm_layer, spatial_dims=len(self.window_size))
+    @nn.compact
+    def __call__(self, x):
+        x_shape = x.shape
         b, c, d, h, w = x_shape
         window_size, shift_size = get_window_size((d, h, w), self.window_size, self.shift_size)
+        
         x = einops.rearrange(x, "b c d h w -> b d h w c")
         dp = int(np.ceil(d / window_size[0])) * window_size[0]
         hp = int(np.ceil(h / window_size[1])) * window_size[1]
         wp = int(np.ceil(w / window_size[2])) * window_size[2]
-        attn_mask = create_attn_mask([dp, hp, wp], window_size, shift_size, x.device)
+        attn_mask = create_attn_mask([dp, hp, wp], window_size, shift_size)
         for blk in self.blocks:
             x = blk(x, attn_mask)
         x = x.view(b, d, h, w, -1)
@@ -501,8 +541,6 @@ class BasicLayer(nn.Module):
             x = self.downsample(x)
         x = einops.rearrange(x, "b d h w c -> b c d h w")
         return x
-
-
 
 class PatchEmbed(nn.Module):
     r""" Image to Patch Embedding
@@ -513,19 +551,30 @@ class PatchEmbed(nn.Module):
         embed_dim (int): Number of linear projection output channels. Default: 96.
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
-    img_size: Tuple[int] = (224, 224)
-    patch_size: Tuple[int] = (4, 4)
-    embed_dim: int = 96
-    norm_layer: Optional[Type[nn.Module]] = None
-    proj = nn.Conv(features=embed_dim, 
-                                kernel_size=patch_size, 
-                                strides=patch_size)      
-    norm = norm_layer(embed_dim)
+    img_size: Tuple[int]
+    patch_size: Tuple[int]
+    embed_dim: int
+    in_channels: int
+    norm_layer=nn.LayerNorm
+  
+    def setup(self):
+        self.proj = myConv3D(in_channels=self.in_channels,out_channels=self.embed_dim
+                ,kernel_size= self.patch_size ,stride= self.patch_size )    
+        # self.proj = nn.Conv(features=5,
+        #                     kernel_size=self.patch_size, 
+        #                     strides=self.patch_size)    
 
 
-    def forward(self, x):
-        x_shape = x.size()
+        self.embed_dim_inner= np.product(list(self.patch_size))
+        self.norm = self.norm_layer()
+
+
+    @nn.compact
+    def __call__(self, x):
+
+        x_shape = x.shape
         _, _, d, h, w = x_shape
+        #we just make sure that the image is divisible by the patch size 
         if w % self.patch_size[2] != 0:
             x = jnp.pad(x, (0, self.patch_size[2] - w % self.patch_size[2]))
         if h % self.patch_size[1] != 0:
@@ -536,11 +585,14 @@ class PatchEmbed(nn.Module):
 
         x = self.proj(x)
         if self.norm is not None:
-            x_shape = x.size()
-            x = x.flatten(2).transpose(1, 2)
+            x_shape = x.shape
+            #we leave batch and channels as is rest is flattened
+            x = x.reshape(x_shape[0],x_shape[1],-1).swapaxes(1, 2)
             x = self.norm(x)
+            #here somehow we got just the flattened windows
             d, wh, ww = x_shape[2], x_shape[3], x_shape[4]
-            x = x.transpose(1, 2).reshape(-1, self.embed_dim, d, wh, ww)
+
+            x = x.swapaxes(1, 2).reshape(-1, self.embed_dim, d, wh, ww)
 
         return x
 
@@ -551,13 +603,13 @@ class SwinTransformer(nn.Module):
     <https://arxiv.org/abs/2103.14030>"
     https://github.com/microsoft/Swin-Transformer
     """
-
-    patch_size: Tuple[int] = (4, 4)
-    in_chans: int = 3
-    embed_dim: int = 96
-    depths: Tuple[int] = (2, 2, 6, 2)
-    num_heads: Tuple[int] = (3, 6, 12, 24)
-    window_size: Tuple[int] = (7, 7)
+    img_size: Tuple[int] 
+    patch_size: Tuple[int] 
+    in_chans: int 
+    embed_dim: int
+    depths: Tuple[int] 
+    num_heads: Tuple[int] 
+    window_size: Tuple[int] 
     mlp_ratio: float = 4.0
     qkv_bias: bool = True
     drop_rate: float = 0.0
@@ -568,76 +620,60 @@ class SwinTransformer(nn.Module):
     spatial_dims: int = 3
     downsample="merging"
     norm_layer: Type[nn.Module] = nn.LayerNorm
-
-    num_layers = len(depths)
-    embed_dim = embed_dim
-    patch_norm = patch_norm
-    window_size = window_size
-    patch_size = patch_size
-    patch_embed = PatchEmbed(
-        patch_size=patch_size,
-        in_chans=in_chans,
-        embed_dim=embed_dim,
-        norm_layer=norm_layer if patch_norm else None,  # type: ignore
-        spatial_dims=spatial_dims,
-    )
-    pos_drop = nn.Dropout(p=drop_rate)
-    dpr = [x.item() for x in jnp.linspace(0, drop_path_rate, sum(depths))]
-    layers1 = nn.ModuleList()
-    layers2 = nn.ModuleList()
-    layers3 = nn.ModuleList()
-    layers4 = nn.ModuleList()
-    down_sample_mod = PatchMerging
-    for i_layer in range(num_layers):
-        layer = BasicLayer(
-            dim=int(embed_dim * 2**i_layer),
-            depth=depths[i_layer],
-            num_heads=num_heads[i_layer],
-            window_size=window_size,
-            drop_path=dpr[sum(depths[:i_layer]) : sum(depths[: i_layer + 1])],
-            mlp_ratio=mlp_ratio,
-            qkv_bias=qkv_bias,
-            drop=drop_rate,
-            attn_drop=attn_drop_rate,
-            norm_layer=norm_layer,
-            downsample=down_sample_mod,
-            use_checkpoint=use_checkpoint,
+    def setup(self):
+        num_layers = len(self.depths)
+        self.patch_embed = PatchEmbed(
+            in_channels=self.in_chans,
+            img_size=self.img_size,
+            patch_size=self.patch_size,
+            embed_dim=self.embed_dim,
         )
-        if i_layer == 0:
-            layers1.append(layer)
-        elif i_layer == 1:
-            layers2.append(layer)
-        elif i_layer == 2:
-            layers3.append(layer)
-        elif i_layer == 3:
-            layers4.append(layer)
-    num_features = int(embed_dim * 2 ** (num_layers - 1))
+        self.pos_drop = nn.Dropout(self.drop_rate)
+        dpr = [x.item() for x in jnp.linspace(0, self.drop_path_rate, sum(self.depths))]
+        down_sample_mod = PatchMerging
+
+        self.layers = [BasicLayer(
+                dim=int(self.embed_dim * 2**i_layer),
+                depth=self.depths[i_layer],
+                num_heads=self.num_heads[i_layer],
+                window_size=self.window_size,
+                drop_path=dpr[sum(self.depths[:i_layer]) : sum(self.depths[: i_layer + 1])],
+                mlp_ratio=self.mlp_ratio,
+                qkv_bias=self.qkv_bias,
+                drop=self.drop_rate,
+                attn_drop=self.attn_drop_rate,
+                downsample=down_sample_mod,
+                use_checkpoint=self.use_checkpoint
+            ) for i_layer in range(num_layers) ]
+ 
+        num_features = int(self.embed_dim * 2 ** (num_layers - 1))
 
     def proj_out(self, x, normalize=False):
         if normalize:
-            x_shape = x.size()
+            x_shape = x.shape
             if len(x_shape) == 5:
                 n, ch, d, h, w = x_shape
                 x = einops.rearrange(x, "n c d h w -> n d h w c")
-                x = nn.layer_norm(x, [ch])
+                x = nn.LayerNorm()(x)#, [ch]
                 x = einops.rearrange(x, "n d h w c -> n c d h w")
             elif len(x_shape) == 4:
                 n, ch, h, w = x_shape
                 x = einops.rearrange(x, "n c h w -> n h w c")
-                x = nn.layer_norm(x, [ch])
+                x = nn.LayerNorm()(x)#, [ch]
                 x = einops.rearrange(x, "n h w c -> n c h w")
         return x
 
-    def forward(self, x, normalize=True):
+    @nn.compact
+    def __call__(self, x,train, normalize=True):
         x0 = self.patch_embed(x)
-        x0 = self.pos_drop(x0)
+        x0 = self.pos_drop(x0,deterministic=not train)
         x0_out = self.proj_out(x0, normalize)
-        x1 = self.layers1[0](x0.contiguous())
+        x1 = self.layers[0](x0)
         x1_out = self.proj_out(x1, normalize)
-        x2 = self.layers2[0](x1.contiguous())
+        x2 = self.layers[1](x1)
         x2_out = self.proj_out(x2, normalize)
-        x3 = self.layers3[0](x2.contiguous())
+        x3 = self.layers[2](x2)
         x3_out = self.proj_out(x3, normalize)
-        x4 = self.layers4[0](x3.contiguous())
+        x4 = self.layers[3](x3)
         x4_out = self.proj_out(x4, normalize)
         return [x0_out, x1_out, x2_out, x3_out, x4_out]

@@ -33,9 +33,9 @@
 		"--init", "--gpus", "all"
         ,"--ipc", "host",
         "--net", "host", 
-		"--privileged" 
-        // "-e", "DISPLAY=${env:DISPLAY}",
-        // "-v", "/tmp/.X11-unix:/tmp/.X11-unix"
+		"--privileged", 
+        "-e", "DISPLAY=${env:DISPLAY}",
+        "-v", "/tmp/.X11-unix:/tmp/.X11-unix"
 		],
 	// Add the IDs of extensions you want installed when the container is created.
 	"extensions": [
@@ -43,9 +43,9 @@
 		// ,"julialang.language-julia"
 		// "ms-python.vscode-pylance"
 	],
-	"mounts": [
-		"source=/media/jm/NewVolume/slicerData,target=/home/sliceruser/slicerData,type=bind,consistency=cached"
-	  ],
+	// "mounts": [
+	// 	"source=/media/jm/NewVolume/slicerData,target=/home/sliceruser/slicerData,type=bind,consistency=cached"
+	//   ],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],

@@ -29,6 +29,9 @@ https://arxiv.org/pdf/2207.08412.pdf
 https://github.com/ayanglab/SwinMR
 
 
+Loss
+https://arxiv.org/abs/2010.01412
+
 
 
 3d swin and 3d deformable detr 

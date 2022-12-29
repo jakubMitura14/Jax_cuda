@@ -535,14 +535,14 @@ class SwinTransformerV2(nn.Module):
         patch_norm (bool): If True, add normalization after patch embedding. Default: True
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
     """
-    img_size: Tuple[int] = (224, 224)
-    patch_size: Tuple[int] = (4, 4)
+    img_size: Tuple[int] = (16,16,16)
+    patch_size: Tuple[int] = (4, 4,4)
     in_chans: int = 3
     num_classes: int = 1000
     embed_dim: int = 96
     depths: Tuple[int] = (2, 2, 6, 2)
     num_heads: Tuple[int] = (3, 6, 12, 24)
-    window_size: Tuple[int] = (7, 7)
+    window_size: Tuple[int] = (8, 8,8)
     mlp_ratio: int = 4
     qkv_bias: bool = True
     drop_rate: float = 0.0
@@ -566,6 +566,7 @@ class SwinTransformerV2(nn.Module):
         self.pos_drop = nn.Dropout(rate=self.drop_rate)
 
         self.dpr = [x.item() for x in np.linspace(0, self.drop_path_rate, sum(self.depths))]  # stochastic depth decay rule
+        downsample = PatchMerging(dim=self.dim, norm_layer=self.norm_layer, spatial_dims=len(self.window_size))
 
         # build layers
         self.layers = [BasicLayer(dim=int(self.embed_dim * 2 ** i_layer),
@@ -579,7 +580,7 @@ class SwinTransformerV2(nn.Module):
                                drop_rate=self.drop_rate, attn_drop_rate=self.attn_drop_rate,
                                drop_path_rate=self.dpr[sum(self.depths[:i_layer]):sum(self.depths[:i_layer + 1])],
                                norm_layer=self.norm_layer,
-                               downsample=PatchMerging if (i_layer < self.num_layers - 1) else None)
+                               downsample=downsample)
         for i_layer in range(self.num_layers)]
 
         self.norm = self.norm_layer(self.num_features)
