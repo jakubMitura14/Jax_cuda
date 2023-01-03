@@ -43,9 +43,9 @@
 		// ,"julialang.language-julia"
 		// "ms-python.vscode-pylance"
 	],
-	// "mounts": [
-	// 	"source=/media/jm/NewVolume/slicerData,target=/home/sliceruser/slicerData,type=bind,consistency=cached"
-	//   ],
+	"mounts": [
+		  "source=/media/jm/NewVolume/datasets/Task09_Spleen/Task09_Spleen,target=/root/data,type=bind,consistency=cached"
+	  ],
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],

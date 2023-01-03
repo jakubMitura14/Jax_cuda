@@ -12,6 +12,40 @@ PRNGKey = Any
 Shape = Tuple[int]
 Dtype = Any
 
+
+class DeConv3x3(nn.Module):
+  """
+  copied from https://github.com/google-research/scenic/blob/main/scenic/projects/baselines/unet.py
+  Deconvolution layer for upscaling.
+  Attributes:
+    features: Num convolutional features.
+    padding: Type of padding: 'SAME' or 'VALID'.
+    use_batch_norm: Whether to use batchnorm at the end or not.
+  """
+
+  features: int
+  padding: str = 'SAME'
+  use_norm: bool = True
+  def setup(self):  
+    self.convv = nn.ConvTranspose(
+            features=self.features,
+            kernel_size=(3, 3,3),
+            strides=(2, 2,2))
+  @nn.compact
+  def __call__(self, x: jnp.ndarray, *, train: bool) -> jnp.ndarray:
+    """Applies deconvolution with 3x3 kernel."""
+    # if self.padding == 'SAME':
+    #   padding = ((1, 2), (1, 2))
+    # elif self.padding == 'VALID':
+    #   padding = ((0, 0), (0, 0))
+    # else:
+    #   raise ValueError(f'Unkonwn padding: {self.padding}')
+    x=einops.rearrange(x, "n c d h w -> n d h w c")
+    x = self.convv(x)
+    if self.use_norm:
+      x = nn.LayerNorm()(x)
+    return einops.rearrange(x, "n d h w c-> n c d h w")
+
 def window_partition(x, window_size):
     """
     based on https://github.com/Project-MONAI/MONAI/blob/97918e46e0d2700c050e678d72e3edb35afbd737/monai/networks/blocks/mlp.py#L22
@@ -148,116 +182,67 @@ class WindowAttention(nn.Module):
     attn_drop_rate: Optional[float] = 0.0
     proj_drop_rate: Optional[float] = 0.0
 
-    def get_relative_coords(self,window_size):
-        """
-        get the relative positions of the entries inside the window
-        it depends only on the shape of the window
-        """
-        relative_coords_h = np.arange(-(window_size[0] - 1), window_size[0], dtype=np.float32)
-        relative_coords_w = np.arange(-(window_size[1] - 1), window_size[1], dtype=np.float32)
-        relative_coords_d = np.arange(-(window_size[2] - 1), window_size[2], dtype=np.float32)
-        
-        relative_coords_table = np.expand_dims(np.transpose(np.stack(
-            np.meshgrid(relative_coords_h,
-                            relative_coords_w,relative_coords_d)), (1, 2, 0)), axis=0)  # 1, 2*Wh-1, 2*Ww-1, 2
-        #Haven't implemented retraining a model with a different pretrained window size
-        relative_coords_table[:, :, :, 0] /= (window_size[0] - 1)
-        relative_coords_table[:, :, :, 1] /= (window_size[1] - 1)
-        relative_coords_table[:, :, :, 2] /= (window_size[2] - 1)
-        relative_coords_table *= 8  # normalize to -8, 8
-        # still using log but log2 in this case
-        return np.sign(relative_coords_table) * np.log2(
-            np.abs(relative_coords_table) + 1.0) / np.log2(8)  
 
     def setup(self):
         self.cpb = MLP(hidden_dim=512,
                        out_dim=self.num_heads,
                        dropout_rate=0.0,
                        act_layer=nn.relu)
-        #used later as maximum allowed value of attention as far as I get it               
-        self.logit_scale = self.param('tau', nn.initializers.normal(0.02), (1,self.num_heads, 1, 1)) + jnp.log(10)
-        if self.qkv_bias:
-            # keys are ignored
-            self.q_linear = nn.Dense(features=self.dim, use_bias=self.qkv_bias, 
-                                    bias_init=nn.initializers.constant(0))
-            self.v_linear = nn.Dense(features=self.dim, use_bias=self.qkv_bias, 
-                                    bias_init=nn.initializers.constant(0))
-        else:
-            self.q_linear = nn.Dense(features=self.dim, use_bias=self.qkv_bias)
-            self.v_linear = nn.Dense(features=self.dim, use_bias=self.qkv_bias)
-
-
-
-        # still using log but log2 in this case
-        self.relative_coords_table =self.get_relative_coords(self.window_size)
-
-
-        # get pair-wise relative position index for each token inside the window
-        coords_h = np.arange(self.window_size[0])
-        coords_w = np.arange(self.window_size[1])
-        coords_d = np.arange(self.window_size[1])
-        x, y,z = np.meshgrid(coords_h, coords_w,coords_d)
-        coords = np.stack([y, x,z])  # 3, Wh, Ww
-        coords_flatten = coords.reshape(3, -1)  # 3, Wh*Ww
-        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        relative_coords = np.transpose(relative_coords, (1, 2, 0))  # Wh*Ww, Wh*Ww, 2
+        self.relative_position_bias_table = jnp.zeros((
+                (2 * self.window_size[0] - 1) * (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1),
+                self.num_heads)
+            )
+        coords_d = np.arange(self.window_size[0])
+        coords_h = np.arange(self.window_size[1])
+        coords_w = np.arange(self.window_size[2])
+        coords = np.stack(np.meshgrid(coords_d, coords_h, coords_w))
+        coords_flatten = einops.rearrange(coords,'d a b c -> d (a b c)')
+        relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
+        relative_coords = relative_coords.transpose(1, 2, 0)
         relative_coords[:, :, 0] += self.window_size[0] - 1
         relative_coords[:, :, 1] += self.window_size[1] - 1
         relative_coords[:, :, 2] += self.window_size[2] - 1
         relative_coords[:, :, 0] *= (2 * self.window_size[1] - 1) * (2 * self.window_size[2] - 1)
         relative_coords[:, :, 1] *= 2 * self.window_size[2] - 1
 
-        self.relative_position_index = np.sum(relative_coords, axis=-1)  # Wh*Ww, Wh*Wwbn 
-          
-        # self.qkv = nn.Dense(features=self.dim*3, use_bias=qkv_bias)
-        self.k_linear = nn.Dense(features=self.dim, use_bias=False)
-        self.attn_drop = nn.Dropout(rate=self.attn_drop_rate)
-        self.proj = nn.Dense(features=self.dim)
-        self.proj_drop = nn.Dropout(rate=self.proj_drop_rate)
-
+        relative_position_index = relative_coords.sum(-1)
+        self.relative_position_index=relative_position_index
+        self.qkv = nn.Dense(self.dim * 3,  use_bias=False)
+        self.attn_drop = nn.Dropout(self.attn_drop_rate)
+        self.proj = nn.Dense(self.dim)
+        self.proj_drop = nn.Dropout(self.proj_drop_rate)
+        self.softmax = jax.nn.softmax
+        head_dim = self.dim // self.num_heads
+        self.scale = head_dim**-0.5
     @nn.compact
     def __call__(self, x, *, mask=None, deterministic):
-    # def __call__(self, x, log_relative_position_index, *, mask=None, deterministic):
-        """
-        Args:
-            x: input features with shape of (num_windows*B, N, C)
-            mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
-        """
-        B_, N, C = x.shape
-        #embedding and reshaping queries keys and values
-        q = jnp.transpose(self.q_linear(x).reshape(B_, N, 1, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))[0]
-        k = jnp.transpose(self.k_linear(x).reshape(B_, N, 1, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))[0]
-        v = jnp.transpose(self.v_linear(x).reshape(B_, N, 1, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4))[0]
-
-
-        # cosine attention
-        qk = jnp.clip(jnp.expand_dims(jnp.linalg.norm(q, axis=-1), axis=-1)@jnp.expand_dims(jnp.linalg.norm(k, axis=-1), axis=-2), a_min=1e-6)
-        attn = q@(jnp.swapaxes(k, -2,-1))/qk
-        attn = attn*jnp.clip(self.logit_scale, a_min=1e-2)
-
-        # Log-CPB
-        #nH seem to be dimension for diffrent windows
-        relative_position_bias_table = self.cpb(self.relative_coords_table, deterministic=True).reshape(-1, self.num_heads)
-        relative_position_bias = relative_position_bias_table[self.relative_position_index.flatten()].reshape(
-            self.window_size[0] * self.window_size[1]* self.window_size[2], self.window_size[0] * self.window_size[1]** self.window_size[2], -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = jnp.transpose(relative_position_bias, (2, 0, 1))  # nH, Wh*Ww*Wd, Wh*Ww*Wd
-        relative_position_bias = 16 * nn.sigmoid(relative_position_bias)
-        attn = attn + jnp.expand_dims(relative_position_bias, axis=0)
-
+        b, n, c = x.shape
+        qkv = self.qkv(x).reshape(b, n, 3, self.num_heads, c // self.num_heads).transpose(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        q = q * self.scale
+        attn = q @ jnp.swapaxes(k,-2, -1)
+        relative_position_bias = self.relative_position_bias_table[
+            self.relative_position_index.copy()[:n, :n].reshape(-1)  # type: ignore
+        ].reshape(n, n, -1)
+        relative_position_bias = jnp.transpose(relative_position_bias,(2, 0, 1))
+        #we expand dima and broadcast to add positional encoding to all windows (first dim is about windows and batches)
+        attn = attn + jnp.expand_dims(relative_position_bias,0)
+        print(f"relative_position_bias {relative_position_bias.shape} attn {attn.shape}")
         if mask is not None:
-            nW = mask.shape[0]
-            attn = attn.reshape(B_ // nW, nW, self.num_heads, N, N) + jnp.expand_dims(mask, axis=(0,2))
-            attn = attn.reshape(-1, self.num_heads, N, N)
-            attn = nn.softmax(attn, axis=-1)
+            nw = mask.shape[0]
+            print(f"mask.shape {mask.shape} x {x.shape} b {b}, n {n}, c {c} nw {nw} self.num_heads {self.num_heads} b // nw {b // nw} " )
+            nwww=max(b // nw,1)
+            attn = jnp.reshape(attn,(nwww, nw, self.num_heads, n, n)) 
+            attn=attn+ jnp.expand_dims(jnp.expand_dims(mask, 1),0)
+            attn = jnp.reshape(attn,(-1, self.num_heads, n, n))
+            attn = self.softmax(attn)
         else:
-            attn = nn.softmax(attn, axis=-1)
+            attn = self.softmax(attn)
 
-        attn = self.attn_drop(attn, deterministic=deterministic)
-
-        x = jnp.swapaxes((attn @ v), 1, 2).reshape(B_, N, C)
+        attn = self.attn_drop(attn,deterministic=deterministic)
+        x = jnp.swapaxes((attn @ v),1, 2).reshape(b, n, c)
         x = self.proj(x)
-        x = self.proj_drop(x, deterministic=deterministic)
-
+        x = self.proj_drop(x,deterministic=deterministic)
         return x
 
 class IdentityLayer(nn.Module):
@@ -266,19 +251,6 @@ class IdentityLayer(nn.Module):
     @nn.compact
     def __call__(self, x, *, deterministic):
         return x
-
-class AdaptiveAvgPool1d(nn.Module):
-    """ 
-        Applying a 1D adaptive average pooling over an input data.
-    """
-    output_size: int = 1
-
-    @nn.compact
-    def __call__(self, x):
-        stride = (x.shape[1]//self.output_size)
-        kernel_size = (x.shape[1]-(self.output_size-1)*stride)
-        avg_pool = nn.avg_pool(inputs=x, window_shape=(kernel_size,), strides=(stride,))
-        return avg_pool
 
 class myConv3D(nn.Module):
     """ 
@@ -300,8 +272,6 @@ class myConv3D(nn.Module):
         parr = self.param('parr', lambda rng, shape: self.initializer(rng,self.weight_size), self.weight_size)
         return  jax.lax.conv_general_dilated(x, parr,self.stride, 'SAME')
 
-
-
 def create_attn_mask(dims,window_size,shift_size):
     """
     as far as I see attention masks are needed to deal with the changing windows
@@ -317,10 +287,13 @@ def create_attn_mask(dims,window_size,shift_size):
                     img_mask=img_mask.at[:, d, h, w, :].set(cnt)
                     cnt += 1
         mask_windows = window_partition(img_mask, window_size)
+        mask_windows=einops.rearrange(mask_windows, 'b a 1 -> b a')
         #so we get the matrix where dim 0 is of len= number of windows and dim 1 the flattened window
-        mask_windows = mask_windows.reshape(-1, window_size[0] * window_size[1])
         attn_mask = jnp.expand_dims(mask_windows, axis=1) - jnp.expand_dims(mask_windows, axis=2)
         attn_mask = jnp.where(attn_mask==0, x=float(0.0), y=float(-100.0))
+        # print(f"0000  dims  {dims}  attn_mask {attn_mask.shape} ")
+
+
     else:
         attn_mask = None
 
@@ -367,7 +340,6 @@ class SwinTransformerBlock(nn.Module):
             attn_drop_rate=self.attn_drop_rate,
             proj_drop_rate=self.drop_path_rate,
         )
-
         self.batch_dropout = nn.Dropout(rate=self.drop_path_rate, broadcast_dims=[1,2]) \
         if self.drop_path_rate > 0. else IdentityLayer()
         self.norm2 = self.norm_layer()
@@ -375,11 +347,10 @@ class SwinTransformerBlock(nn.Module):
         self.mlp = MLP(hidden_dim=mlp_hidden_dim, dropout_rate=self.drop_rate,
                        act_layer=self.act_layer)
 
-    def forward_part1(self, x, mask_matrix):
+    def forward_part1(self, x, mask_matrix,deterministic):
         x_shape = x.shape
         x = self.norm1(x)
         b, d, h, w, c = x.shape
-        print(f"ggggggggggg { self.window_size}  {self.shift_size}")
         window_size, shift_size = get_window_size((d, h, w), self.window_size, self.shift_size)
 
         # print(f"sss win transformer block window_size {window_size} shift_size {shift_size}")
@@ -392,30 +363,32 @@ class SwinTransformerBlock(nn.Module):
         dims = [b, dp, hp, wp]
 
         if any(i > 0 for i in shift_size):
-            shifted_x = jnp.roll(x, shift=(-shift_size[0], -shift_size[1], -shift_size[2]), dims=(1, 2, 3))
+            shifted_x = jnp.roll(x, (-shift_size[0], -shift_size[1], -shift_size[2]), axis=(1, 2, 3))
             attn_mask = mask_matrix
         else:
             shifted_x = x
             attn_mask = None
         x_windows = window_partition(shifted_x, window_size)
-        attn_windows = self.attn(x_windows, mask=attn_mask)
-        attn_windows = attn_windows.view(-1, *(window_size + (c,)))
+        attn_windows = self.attn(x_windows, mask=attn_mask,deterministic=deterministic)
+        attn_windows = attn_windows.reshape(-1, *(window_size + (c,)))
         shifted_x = window_reverse(attn_windows, window_size, dims)
         if any(i > 0 for i in shift_size):
-            x = jnp.roll(shifted_x, shift=(shift_size[0], shift_size[1], shift_size[2]), dims=(1, 2, 3))
+            x = jnp.roll(shifted_x, (shift_size[0], shift_size[1], shift_size[2]), axis=(1, 2, 3))
         else:
             x = shifted_x
         return x
 
-    def forward_part2(self, x):
-        return self.drop_path(self.mlp(self.norm2(x)))
+    def forward_part2(self, x,deterministic):
+        n=self.norm2(x)
+        a=self.mlp(n,deterministic=deterministic)
+        return self.batch_dropout(a, deterministic=deterministic)
 
     @nn.compact
-    def __call__(self, x, mask_matrix):
+    def __call__(self, x, mask_matrix,deterministic):
         shortcut = x
-        x = self.forward_part1(x, mask_matrix)
-        x = shortcut + self.drop_path(x)
-        x = x + self.forward_part2(x)
+        x = self.forward_part1(x, mask_matrix,deterministic)
+        x = shortcut + self.batch_dropout(x,deterministic=deterministic)
+        x = x + self.forward_part2(x,deterministic)
         return x
 
 class PatchMerging(nn.Module):
@@ -437,9 +410,10 @@ class PatchMerging(nn.Module):
         if len(x_shape) != 5:
             raise ValueError(f"expecting 5D x, got {x.shape}.")
         b, d, h, w, c = x_shape
+        x = x.reshape(b, h, w,d, c)
         # pad_input = (h % 2 == 1) or (w % 2 == 1) or (d % 2 == 1)
         # if pad_input:
-        #     x = F.pad(x, (0, 0, 0, w % 2, 0, h % 2, 0, d % 2))
+        #     x = jnp.pad(x, (0, 0, 0, w % 2, 0, h % 2, 0, d % 2))
         x0 = x[:, 0::2, 0::2, 0::2, :]
         x1 = x[:, 1::2, 0::2, 0::2, :]
         x2 = x[:, 0::2, 1::2, 0::2, :]
@@ -449,6 +423,7 @@ class PatchMerging(nn.Module):
         x6 = x[:, 0::2, 0::2, 1::2, :]
         x7 = x[:, 1::2, 1::2, 1::2, :]
         x = jnp.concatenate([x0, x1, x2, x3, x4, x5, x6, x7], axis=-1)  # B H/2 W/2 4*C
+        #x = jnp.concatenate([x0, x0, x0, x0, x0, x0, x0, x0], axis=-1)  # B H/2 W/2 4*C
         x = self.norm(x)
         x = self.reduction(x)
         return x
@@ -488,7 +463,7 @@ class BasicLayer(nn.Module):
     attn_drop_rate: Optional[float] = 0.0
     drop_path_rate: Optional[float] = 0.0
     norm_layer = nn.LayerNorm
-    downsample: Type[nn.Module] = None# can be patch merging
+    # downsample: Type[nn.Module] = None# can be patch merging
     drop: float = 0.0
     attn_drop: float = 0.0
     use_checkpoint: bool =False
@@ -507,9 +482,7 @@ class BasicLayer(nn.Module):
                                             if isinstance(self.drop_path_rate, tuple) else self.drop_path_rate,
                                             norm_layer=self.norm_layer) 
         for i in range(self.depth)]
-        self.shift_size = tuple(i // 2 for i in self.window_size)
-        self.no_shift = tuple(0 for i in self.window_size)
-
+        self.downsample=PatchMerging(dim=self.dim,spatial_dims=3,norm_layer=self.norm_layer  )
         # self.blocks = [SwinTransformerBlock(dim=self.dim, input_resolution=self.input_resolution,
         #                                     num_heads=self.num_heads, window_size=self.window_size,
         #                                     shift_size=0 if (i % 2 == 0) else min(self.window_size) // 2,
@@ -524,21 +497,23 @@ class BasicLayer(nn.Module):
         # if self.downsample is not None:
         #     self.downsample = self.downsample(dim=self.dim, norm_layer=self.norm_layer, spatial_dims=len(self.window_size))
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x,deterministic):
         x_shape = x.shape
         b, c, d, h, w = x_shape
         window_size, shift_size = get_window_size((d, h, w), self.window_size, self.shift_size)
         
         x = einops.rearrange(x, "b c d h w -> b d h w c")
+        #so dimensions below are just getting the rounded up shape 
+        #to be divisible by windows
         dp = int(np.ceil(d / window_size[0])) * window_size[0]
         hp = int(np.ceil(h / window_size[1])) * window_size[1]
         wp = int(np.ceil(w / window_size[2])) * window_size[2]
+
         attn_mask = create_attn_mask([dp, hp, wp], window_size, shift_size)
         for blk in self.blocks:
-            x = blk(x, attn_mask)
-        x = x.view(b, d, h, w, -1)
-        if self.downsample is not None:
-            x = self.downsample(x)
+            x = blk(x, attn_mask,deterministic)
+        x = x.reshape(b, d, h, w, -1)
+        x = self.downsample(x)
         x = einops.rearrange(x, "b d h w c -> b c d h w")
         return x
 
@@ -575,12 +550,12 @@ class PatchEmbed(nn.Module):
         x_shape = x.shape
         _, _, d, h, w = x_shape
         #we just make sure that the image is divisible by the patch size 
-        if w % self.patch_size[2] != 0:
-            x = jnp.pad(x, (0, self.patch_size[2] - w % self.patch_size[2]))
-        if h % self.patch_size[1] != 0:
-            x = jnp.pad(x, (0, 0, 0, self.patch_size[1] - h % self.patch_size[1]))
-        if d % self.patch_size[0] != 0:
-            x = jnp.pad(x, (0, 0, 0, 0, 0, self.patch_size[0] - d % self.patch_size[0]))
+        # if w % self.patch_size[2] != 0:
+        #     x = jnp.pad(x, (0, self.patch_size[2] - w % self.patch_size[2]))
+        # if h % self.patch_size[1] != 0:
+        #     x = jnp.pad(x, (0, 0, 0, self.patch_size[1] - h % self.patch_size[1]))
+        # if d % self.patch_size[0] != 0:
+        #     x = jnp.pad(x, (0, 0, 0, 0, 0, self.patch_size[0] - d % self.patch_size[0]))
 
 
         x = self.proj(x)
@@ -642,38 +617,39 @@ class SwinTransformer(nn.Module):
                 qkv_bias=self.qkv_bias,
                 drop=self.drop_rate,
                 attn_drop=self.attn_drop_rate,
-                downsample=down_sample_mod,
+                # downsample=down_sample_mod,
                 use_checkpoint=self.use_checkpoint
             ) for i_layer in range(num_layers) ]
- 
-        num_features = int(self.embed_dim * 2 ** (num_layers - 1))
+        self.deconv_a= DeConv3x3(features=96)
+        self.deconv_b= DeConv3x3(features=24)
+        self.deconv_c= DeConv3x3(features=12)
+        self.deconv_d= DeConv3x3(features=1)
 
+        num_features = int(self.embed_dim * 2 ** (num_layers - 1))
+        print(f"num_features {num_features}")
     def proj_out(self, x, normalize=False):
         if normalize:
             x_shape = x.shape
-            if len(x_shape) == 5:
-                n, ch, d, h, w = x_shape
-                x = einops.rearrange(x, "n c d h w -> n d h w c")
-                x = nn.LayerNorm()(x)#, [ch]
-                x = einops.rearrange(x, "n d h w c -> n c d h w")
-            elif len(x_shape) == 4:
-                n, ch, h, w = x_shape
-                x = einops.rearrange(x, "n c h w -> n h w c")
-                x = nn.LayerNorm()(x)#, [ch]
-                x = einops.rearrange(x, "n h w c -> n c h w")
+            n, ch, d, h, w = x_shape
+            x = einops.rearrange(x, "n c d h w -> n d h w c")
+            x = nn.LayerNorm()(x)#, [ch]
+            x = einops.rearrange(x, "n d h w c -> n c d h w")
         return x
 
     @nn.compact
     def __call__(self, x,train, normalize=True):
+        deterministic=not train
         x0 = self.patch_embed(x)
-        x0 = self.pos_drop(x0,deterministic=not train)
-        x0_out = self.proj_out(x0, normalize)
-        x1 = self.layers[0](x0)
+        print(f"x0 patched up  {x0.shape}")
+        x0 = self.pos_drop(x0,deterministic=deterministic)
+        x0_out = self.proj_out(x0, normalize)      
+        x1 = self.layers[0](x0,deterministic)
         x1_out = self.proj_out(x1, normalize)
-        x2 = self.layers[1](x1)
+        x2 = self.layers[1](x1,deterministic)
         x2_out = self.proj_out(x2, normalize)
-        x3 = self.layers[2](x2)
+        x3 = self.layers[2](x2,deterministic)
         x3_out = self.proj_out(x3, normalize)
-        x4 = self.layers[3](x3)
-        x4_out = self.proj_out(x4, normalize)
-        return [x0_out, x1_out, x2_out, x3_out, x4_out]
+
+        x4_out=self.deconv_a(x3_out,train = train)
+
+        return [x0_out, x1_out, x2_out, x3_out]
