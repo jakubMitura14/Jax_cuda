@@ -1,10 +1,7 @@
 FROM nvcr.io/nvdlfwea/jax/jax:22.10-py3
-#FROM nvdlfwea/jax/jax
 
-RUN apt update && apt install python3-pip -y
-RUN python3 -m  pip install torch torchvision torchaudio
-RUN python3 -m  pip install torch-scatter torch-sparse torch-cluster torch-spline-conv torch-geometric -f https://data.pyg.org/whl/torch-1.12.0+cu116.html
-RUN python3 -m  pip install 'monai[nibabel, skimage, pillow, tensorboard, gdown, ignite, torchvision, itk, tqdm, lmdb, psutil, cucim, pandas, einops, transformers, mlflow, matplotlib, tensorboardX, tifffile, imagecodecs]'
+RUN python3 -m  pip  install torch torchvision torchaudio torch-geometric --extra-index-url https://download.pytorch.org/whl/cpu
+
 RUN python3 -m  pip install \
     black \
     pandas \
@@ -14,20 +11,27 @@ RUN python3 -m  pip install \
     SimpleITK \
     batchgenerators \
     dask \
+    nibabel \
+    SimpleITK \
     # intensity-normalization[ants] \
-    warp-lang \
+    # warp-lang \
     report_guided_annotation \
-    ott-jax \ 
-    evojax[extra] \
-    jraph \
+    # ott-jax \ 
+    # evojax[extra] \
+    # jraph \
     flax \
     toolz \
     ipyparallel \
     optuna \
-    equinox \
-    einops
+    # equinox \
+    einops \
+    torchio
+
+# RUN python3 -m  pip install monai-weekly
 
 
+RUN python3 -m pip uninstall -y horovod
+RUN HOROVOD_WITH_PYTORCH=1 python3 -m  pip install --no-cache-dir horovod[pytorch]
 
 RUN git clone https://github.com/SuperElastix/SimpleElastix ${HOME}/externalRepos/elastix
 
@@ -84,8 +88,30 @@ RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
 RUN apt install graphviz
 RUN go install github.com/google/pprof@latest
 
+# ENV cudnn_version=8.6.0.163
+# ENV cuda_version=cuda11.6
+
+# RUN apt-get install libcudnn8_8.6.0.163-1+cuda11.6
+# RUN apt-get install libcudnn8-dev_8.6.0.163-1+cuda11.6
+# RUN apt-get install libcudnn8=${cudnn_version}-1+${cuda_version}
+# RUN apt-get install libcudnn8-dev=${cudnn_version}-1+${cuda_version}
+
 # # install python3-pip
 # RUN apt update && apt install python3-pip -y
 
 # RUN pip install "jax[cuda]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
+#FROM nvdlfwea/jax/jax
+
+# RUN apt update && apt install python3-pip -y
+# RUN git clone --recursive https://github.com/uber/horovod.git
+# RUN cd horovod \
+#     python setup.py clean \
+#     python setup.py bdist_wheel
+# ENV HOROVOD_WITH_PYTORCH=1
+
+# RUN python3 -m  pip install horovod==0.26.1
+# RUN apt install -y build-essential
+# RUN apt-get update
+# RUN apt install -y lsb-release wget software-properties-common gnupg
+# RUN bash -c "$(wget -O - https://apt.llvm.org/llvm.sh)"

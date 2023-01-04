@@ -7,6 +7,12 @@ from typing import Any, Callable, Optional, Tuple, Type, List
 from jax import lax, random, numpy as jnp
 import einops
 import jax 
+from flax.linen import partitioning as nn_partitioning
+import jax
+
+remat = nn_partitioning.remat
+
+
 Array = Any
 PRNGKey = Any
 Shape = Tuple[int]
@@ -14,37 +20,44 @@ Dtype = Any
 
 
 class DeConv3x3(nn.Module):
-  """
-  copied from https://github.com/google-research/scenic/blob/main/scenic/projects/baselines/unet.py
-  Deconvolution layer for upscaling.
-  Attributes:
+    """
+    copied from https://github.com/google-research/scenic/blob/main/scenic/projects/baselines/unet.py
+    Deconvolution layer for upscaling.
+    Attributes:
     features: Num convolutional features.
     padding: Type of padding: 'SAME' or 'VALID'.
     use_batch_norm: Whether to use batchnorm at the end or not.
-  """
+    """
 
-  features: int
-  padding: str = 'SAME'
-  use_norm: bool = True
-  def setup(self):  
-    self.convv = nn.ConvTranspose(
-            features=self.features,
-            kernel_size=(3, 3,3),
-            strides=(2, 2,2))
-  @nn.compact
-  def __call__(self, x: jnp.ndarray, *, train: bool) -> jnp.ndarray:
-    """Applies deconvolution with 3x3 kernel."""
-    # if self.padding == 'SAME':
-    #   padding = ((1, 2), (1, 2))
-    # elif self.padding == 'VALID':
-    #   padding = ((0, 0), (0, 0))
-    # else:
-    #   raise ValueError(f'Unkonwn padding: {self.padding}')
-    x=einops.rearrange(x, "n c d h w -> n d h w c")
-    x = self.convv(x)
-    if self.use_norm:
-      x = nn.LayerNorm()(x)
-    return einops.rearrange(x, "n d h w c-> n c d h w")
+    features: int
+    padding: str = 'SAME'
+    use_norm: bool = True
+    def setup(self):  
+        self.convv = nn.ConvTranspose(
+                features=self.features,
+                kernel_size=(3, 3,3),
+                strides=(2, 2,2),
+                # param_dtype=jax.numpy.float16,
+                
+                )
+
+    def main_call(self, x: jnp.ndarray):
+        x=einops.rearrange(x, "n c d h w -> n d h w c")
+        x = self.convv(x)
+        if self.use_norm:
+            x = nn.LayerNorm()(x)
+        return einops.rearrange(x, "n d h w c-> n c d h w")
+
+    @nn.compact
+    def __call__(self, x: jnp.ndarray, train: bool) -> jnp.ndarray:
+        """Applies deconvolution with 3x3 kernel."""
+        # if self.padding == 'SAME':
+        #   padding = ((1, 2), (1, 2))
+        # elif self.padding == 'VALID':
+        #   padding = ((0, 0), (0, 0))
+        # else:
+        #   raise ValueError(f'Unkonwn padding: {self.padding}')
+        return self.main_call(x)
 
 def window_partition(x, window_size):
     """
@@ -125,13 +138,17 @@ class MLP(nn.Module):
         actual_out_dim = x.shape[-1] if self.out_dim is None else self.out_dim
         x = nn.Dense(features=self.hidden_dim, dtype=self.dtype, 
                      kernel_init=self.kernel_init,
-                     bias_init=self.bias_init)(x)
+                     bias_init=self.bias_init,
+                    #  param_dtype=jax.numpy.float16
+                     )(x)
         # x = nn.gelu(x)
         x = self.act_layer(x)
         x = self.dropout(x, deterministic=deterministic)
         x = nn.Dense(features=actual_out_dim, dtype=self.dtype, 
                      kernel_init=self.kernel_init, 
-                     bias_init=self.bias_init)(x)
+                     bias_init=self.bias_init,
+                    #  param_dtype=jax.numpy.float16
+                     )(x)
         x = self.dropout(x, deterministic=deterministic)
         return x
 
@@ -215,7 +232,7 @@ class WindowAttention(nn.Module):
         head_dim = self.dim // self.num_heads
         self.scale = head_dim**-0.5
     @nn.compact
-    def __call__(self, x, *, mask=None, deterministic):
+    def __call__(self, x,  mask, deterministic):
         b, n, c = x.shape
         qkv = self.qkv(x).reshape(b, n, 3, self.num_heads, c // self.num_heads).transpose(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]
@@ -227,10 +244,9 @@ class WindowAttention(nn.Module):
         relative_position_bias = jnp.transpose(relative_position_bias,(2, 0, 1))
         #we expand dima and broadcast to add positional encoding to all windows (first dim is about windows and batches)
         attn = attn + jnp.expand_dims(relative_position_bias,0)
-        print(f"relative_position_bias {relative_position_bias.shape} attn {attn.shape}")
         if mask is not None:
             nw = mask.shape[0]
-            print(f"mask.shape {mask.shape} x {x.shape} b {b}, n {n}, c {c} nw {nw} self.num_heads {self.num_heads} b // nw {b // nw} " )
+            # print(f"mask.shape {mask.shape} x {x.shape} b {b}, n {n}, c {c} nw {nw} self.num_heads {self.num_heads} b // nw {b // nw} " )
             nwww=max(b // nw,1)
             attn = jnp.reshape(attn,(nwww, nw, self.num_heads, n, n)) 
             attn=attn+ jnp.expand_dims(jnp.expand_dims(mask, 1),0)
@@ -239,10 +255,10 @@ class WindowAttention(nn.Module):
         else:
             attn = self.softmax(attn)
 
-        attn = self.attn_drop(attn,deterministic=deterministic)
+        attn = self.attn_drop(attn,deterministic)
         x = jnp.swapaxes((attn @ v),1, 2).reshape(b, n, c)
         x = self.proj(x)
-        x = self.proj_drop(x,deterministic=deterministic)
+        x = self.proj_drop(x,deterministic)
         return x
 
 class IdentityLayer(nn.Module):
@@ -251,6 +267,8 @@ class IdentityLayer(nn.Module):
     @nn.compact
     def __call__(self, x, *, deterministic):
         return x
+
+
 
 class myConv3D(nn.Module):
     """ 
@@ -332,13 +350,14 @@ class SwinTransformerBlock(nn.Module):
 
     def setup(self):
         self.norm1 = self.norm_layer(self.dim)
-        self.attn = WindowAttention(
+        self.attn = remat(WindowAttention)(
             self.dim,
-            window_size=self.window_size,
-            num_heads=self.num_heads,
-            qkv_bias=self.qkv_bias,
-            attn_drop_rate=self.attn_drop_rate,
-            proj_drop_rate=self.drop_path_rate,
+            self.window_size,
+            self.num_heads,
+            self.qkv_bias,
+            None,
+            self.attn_drop_rate,
+            self.drop_path_rate,
         )
         self.batch_dropout = nn.Dropout(rate=self.drop_path_rate, broadcast_dims=[1,2]) \
         if self.drop_path_rate > 0. else IdentityLayer()
@@ -369,7 +388,7 @@ class SwinTransformerBlock(nn.Module):
             shifted_x = x
             attn_mask = None
         x_windows = window_partition(shifted_x, window_size)
-        attn_windows = self.attn(x_windows, mask=attn_mask,deterministic=deterministic)
+        attn_windows = self.attn(x_windows, attn_mask,deterministic)
         attn_windows = attn_windows.reshape(-1, *(window_size + (c,)))
         shifted_x = window_reverse(attn_windows, window_size, dims)
         if any(i > 0 for i in shift_size):
@@ -620,13 +639,15 @@ class SwinTransformer(nn.Module):
                 # downsample=down_sample_mod,
                 use_checkpoint=self.use_checkpoint
             ) for i_layer in range(num_layers) ]
-        self.deconv_a= DeConv3x3(features=96)
-        self.deconv_b= DeConv3x3(features=24)
-        self.deconv_c= DeConv3x3(features=12)
-        self.deconv_d= DeConv3x3(features=1)
+        self.num_features = int(self.embed_dim * 2 ** (num_layers - 1))
+        self.deconv_a= remat(DeConv3x3)(features=self.num_features//2)
+        self.deconv_b= remat(DeConv3x3)(features=self.num_features//4)
+        self.deconv_c= remat(DeConv3x3)(features=self.num_features//8)
+        self.deconv_d= remat(DeConv3x3)(features=self.num_features//16)
+        self.deconv_e= remat(DeConv3x3)(features=self.num_features//16)
+        self.deconv_f= remat(DeConv3x3)(features=self.num_features//16)
+        self.conv_out= remat(nn.Conv)(features=1,kernel_size=(3,3,3))
 
-        num_features = int(self.embed_dim * 2 ** (num_layers - 1))
-        print(f"num_features {num_features}")
     def proj_out(self, x, normalize=False):
         if normalize:
             x_shape = x.shape
@@ -640,16 +661,30 @@ class SwinTransformer(nn.Module):
     def __call__(self, x,train, normalize=True):
         deterministic=not train
         x0 = self.patch_embed(x)
-        print(f"x0 patched up  {x0.shape}")
         x0 = self.pos_drop(x0,deterministic=deterministic)
         x0_out = self.proj_out(x0, normalize)      
-        x1 = self.layers[0](x0,deterministic)
-        x1_out = self.proj_out(x1, normalize)
-        x2 = self.layers[1](x1,deterministic)
-        x2_out = self.proj_out(x2, normalize)
-        x3 = self.layers[2](x2,deterministic)
-        x3_out = self.proj_out(x3, normalize)
+        # x1 = self.layers[0](x0,deterministic)
+        # x1_out = self.proj_out(x1, normalize)
+        # x2 = self.layers[1](x1,deterministic)
+        # x2_out = self.proj_out(x2, normalize)
+        # x3 = self.layers[2](x2,deterministic)
+        # x3_out = self.proj_out(x3, normalize)
+        # x4_out=self.deconv_a(x3_out,train)
+        # x4_out=einops.rearrange(x4_out, "n c d h w-> n c w h d")
 
-        x4_out=self.deconv_a(x3_out,train = train)
+        # # print(f"x3_out {x3_out.shape} x4_out {x4_out.shape}  x2_out {x2_out.shape}")
+    
+        # x5_out=self.deconv_b(x4_out+x2_out,train)
+        # x5_out=einops.rearrange(x5_out, "n c d h w-> n c h d w")
+        # x6_out=self.deconv_c(x5_out+x1_out,train )
+        # x6_out=einops.rearrange(x6_out, "n c d h w-> n c d w h")
 
-        return [x0_out, x1_out, x2_out, x3_out]
+        # x7_out=self.deconv_d(x6_out+x0_out,train )
+        x7_out=self.deconv_d(x0_out,train )
+        x7_out=self.deconv_e(x7_out,train )
+        x7_out=self.deconv_f(x7_out,train )
+        # print(f"x3_out {x3_out.shape} x4_out {x4_out.shape}  x2_out {x2_out.shape}")
+        x8_out=einops.rearrange(x7_out, "n c d h w -> n d h w c")
+        x8_out=self.conv_out(x8_out)
+
+        return einops.rearrange(x8_out, "n d h w c-> n c d h w")
