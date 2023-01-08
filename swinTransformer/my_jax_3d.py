@@ -182,20 +182,39 @@ class Simple_window_attention(nn.Module):
 
     @nn.compact
     def __call__(self,_, x):
-        x_shape=x.shape
+        t , c =x.shape
+        
         x=self.norm(x)
-        qkv = self.qkv(jnp.ravel(x))
-        qkv = rearrange(qkv,'(t s h) -> t s h', h= self.num_heads, s=3 )#t - token h - heads c - channels
-        q,k,v = rearrange(qkv,'n split h -> split h n 1', h= self.num_heads,split=3 )
-        scaled_dot_prod = einsum(q, k,'h i d , h j d -> h i j') * self.scale_factor
-        # if mask is not None:
-        attn= nn.activation.softmax(scaled_dot_prod,axis=- 1)
-        out = einsum( attn, v,'h i j , h j d -> h i d')
-        out= self.norm2(out)
-        # Re-compose: merge heads with dim_head d
-        out = rearrange(out, "h t d -> (t h d)")
+        qkv = self.qkv(x)
+        q, k, v = tuple(rearrange(qkv, 't (d k h) -> k h t d ', k=3, h=self.num_heads))
+        # Step 3
+        # resulted shape will be: [batch, heads, tokens, tokens]
+        x = einsum( q, k,'h i d , h j d -> h i j') * self.scale_factor
+        x= nn.activation.softmax(x,axis=- 1)
+        # Step 4. Calc result per batch and per head h
+        x = einsum(x, v,'h i j , h j d -> h i d')
+        # Step 5. Re-compose: merge heads with dim_head d
+        x = rearrange(x, "h t d -> t (h d)")
+
+
+        # q, k, v = rearrange(qkv, 'b t (d k) -> k b t d ', k=3, )
+
+        # qkv = rearrange(qkv,'(t s h c) -> t s h c', h= self.num_heads, s=3,c=c )#t - token h - heads c - channels
+        # q,k,v = rearrange(qkv,'n split h c-> split h n c', h= self.num_heads,split=3,c=c )
+        # #normalizing keys
+        # q = q * ((self.dim // self.num_heads) ** -0.5)
+
+        # x = einsum(q, k,'h i d , h j d -> h i j') * self.scale_factor
+        # # if mask is not None:
+        # x= nn.activation.softmax(x,axis=- 1)
+        # x = einsum( x, v,'h i j , h j d -> h i d')
+        # x= self.norm2(x)
+        # # Re-compose: merge heads with dim_head d
+        # x = rearrange(x, "h t d -> (t h d) c",c=c)
+        # print(f"in window end {x.shape}")
+
         #Apply final linear transformation layer
-        return (0,self.out_proj(out))
+        return (0,self.out_proj(x))
 
 class SwinTransformer(nn.Module):
     """
@@ -223,7 +242,7 @@ class SwinTransformer(nn.Module):
     norm_layer: Type[nn.Module] = nn.LayerNorm
     def setup(self):
         num_layers = len(self.depths)
-        embed_dim_inner= np.product(list(self.window_size))
+        # embed_dim_inner= np.product(list(self.window_size))
         
         self.patch_embed = PatchEmbed(
             in_channels=self.in_chans,
@@ -233,20 +252,29 @@ class SwinTransformer(nn.Module):
         )        
 
         i=0
-        length = np.product(list(self.img_size))//np.product(list(self.window_size))
+        length = np.product(list(self.img_size))//(np.product(list(self.window_size))*np.product(list(self.patch_size))  )
         
         self.window_attention = nn.scan(
             remat(Simple_window_attention),
             in_axes=0, out_axes=0,
             variable_broadcast={'params': None},
             split_rngs={'params': False}
-            ,length=length)(self.window_size,embed_dim_inner,self.num_heads[i])
+            ,length=length)(self.window_size,self.embed_dim,self.num_heads[i])
         #convolutions
-        self.num_features = int(self.embed_dim * 2 ** (num_layers - 1))
+        self.num_features = int(self.embed_dim * 2 ** (num_layers - 1))//4
+
+        self.after_window_deconv = remat(nn.ConvTranspose)(
+                features=self.in_chans,
+                kernel_size=(3, 3,3),
+                strides=self.patch_size,
+                # param_dtype=jax.numpy.float16,
+                )
+
         self.conv_a= remat(nn.Conv)(features=self.num_features//16,kernel_size=(3,3,3),strides=(2,2,2))
         self.conv_b= remat(nn.Conv)(features=self.num_features//8,kernel_size=(3,3,3),strides=(2,2,2))
         self.conv_c= remat(nn.Conv)(features=self.num_features//4,kernel_size=(3,3,3),strides=(2,2,2))
         self.conv_d= remat(nn.Conv)(features=self.num_features//2,kernel_size=(3,3,3),strides=(2,2,2))
+
 
         self.deconv_a= remat(DeConv3x3)(features=self.num_features//4)
         self.deconv_b= remat(DeConv3x3)(features=self.num_features//8)
@@ -268,14 +296,17 @@ class SwinTransformer(nn.Module):
     @nn.compact
     def __call__(self, x):
         # deterministic=not train
-        b, c, d, h, w = x.shape
         x=einops.rearrange(x, "n c d h w -> n d h w c")
         x=self.patch_embed(x)
+        b,  d, h, w ,c= x.shape
         x=window_partition(x, self.window_size)
         x=einops.rearrange(x, "bw t c -> bw t c")
         x=self.window_attention(0,x)[1]
-        x=einops.rearrange(x, "bw (t c) -> bw t c" ,c=c)
+
+        # x=einops.rearrange(x, "bw (t c) -> bw t c" ,c=c)
         x=window_reverse(x, self.window_size, (b,d,h,w,c))
+
+        x=self.after_window_deconv(x)
 
         x1=self.conv_a(x )
         x2=self.conv_b(x1 )

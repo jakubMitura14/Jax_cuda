@@ -57,7 +57,7 @@ in_chans=1
 depths= (2, 2, 2, 2)
 num_heads = (3, 3, 3, 3)
 patch_size = (4,4,4)
-window_size = (16,16,16)
+window_size = (4,4,4) # in my definition it is number of patches it holds
 img_size = (1,1,256,256,128)
 
 def focal_loss(inputs, targets):
