@@ -1,3 +1,7 @@
+better boundary detection
+https://arxiv.org/pdf/2210.04285v1.pdf
+
+
 differentiable augmentations
 https://arxiv.org/abs/2010.11695
 

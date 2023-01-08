@@ -19,6 +19,7 @@ import einops
 import torchio as tio
 import optax
 from flax.training import train_state  # Useful dataclass to keep train state
+from torch.utils.data import DataLoader
 
 data_dir='/root/data'
 train_images = sorted(
@@ -38,26 +39,26 @@ subjects_list_val=subjects_list[-9:]
 
 transforms = [
     tio.RescaleIntensity(out_min_max=(0, 1)),
-    tio.Resample((4.0,4.0,4.0)),
-    tio.transforms.CropOrPad((128,128,64)),
+    tio.Resample((2.5,2.5,2.5)),
+    tio.transforms.CropOrPad((256,256,128)),
     tio.RandomAffine(),
 ]
 transform = tio.Compose(transforms)
 subjects_dataset = tio.SubjectsDataset(subjects_list_train, transform=transform)
 
 
-import my_jax_3d
+import my_jax_3d as my_jax_3d
 from my_jax_3d import SwinTransformer
 
 prng = jax.random.PRNGKey(42)
 
-feature_size  = 12
+feature_size  = 24 #by how long vector each image patch will be represented
 in_chans=1
 depths= (2, 2, 2, 2)
 num_heads = (3, 3, 3, 3)
-patch_size = (8,8,8)
+patch_size = (4,4,4)
 window_size = (16,16,16)
-img_size = (1,1,128,128,64)
+img_size = (1,1,256,256,128)
 
 def focal_loss(inputs, targets):
     """
@@ -126,23 +127,23 @@ jax_swin= my_jax_3d.SwinTransformer(img_size=img_size
                 ,num_heads=num_heads                           
                 )
 
-total_steps=30
+total_steps=700
 
 def create_train_state(learning_rate):
     """Creates initial `TrainState`."""
     input=jnp.ones(img_size)
-    params = jax_swin.init(prng, input,train=False)['params'] # initialize parameters by passing a template image
+    params = jax_swin.init(prng, input)['params'] # initialize parameters by passing a template image
     # bb= jax_swin.apply({'params': params},input,train=False)
     # print(f"jax shapee 0 {bb.shape} ")
-    warmup_exponential_decay_scheduler = optax.warmup_exponential_decay_schedule(init_value=0.0001, peak_value=0.00003,
-                                                                                warmup_steps=int(total_steps*0.1),
+    warmup_exponential_decay_scheduler = optax.warmup_exponential_decay_schedule(init_value=0.001, peak_value=0.0003,
+                                                                                warmup_steps=int(total_steps*0.2),
                                                                                 transition_steps=total_steps,
                                                                                 decay_rate=0.8,
-                                                                                transition_begin=int(total_steps*0.1),
-                                                                                end_value=0.00001)    
+                                                                                transition_begin=int(total_steps*0.2),
+                                                                                end_value=0.0001)    
     
     tx = optax.chain(
-        optax.clip_by_global_norm(1.5),  # Clip gradients at norm 1
+        optax.clip_by_global_norm(1.5),  # Clip gradients at norm 1.5
         optax.adamw(learning_rate=warmup_exponential_decay_scheduler)
     )
 
@@ -152,15 +153,15 @@ def create_train_state(learning_rate):
 
 state = create_train_state(0.0001)
 
-# @jax.jit
+# @nn.jit
 def train_step(state, image,label,train):
   """Train for a single step."""
-  image=jnp.reshape(image,img_size )
+#   image=jnp.reshape(image,img_size )
 #   res= jax_swin.apply({'params': state.params},image,train=False)
 #   loss_value, grads = jax.value_and_grad(focal_loss, has_aux=False)(res,label)
 #   state = state.apply_gradients(grads=grads)
   def loss_fn(params):
-    logits = state.apply_fn({'params': params}, image,train=train)
+    logits = state.apply_fn({'params': params}, image)
     loss = focal_loss(logits, label)
     # print(f"loss {loss} ")
     return loss, logits
@@ -168,22 +169,26 @@ def train_step(state, image,label,train):
   grad_fn = jax.grad(loss_fn, has_aux=True)
   grads, logits = grad_fn(state.params)
   state = state.apply_gradients(grads=grads)
-  dice=dice_metr(logits,label)
   f_l=focal_loss(logits,label)
-  ss=jnp.sum(logits)
 
-  return state,dice,f_l,ss
+  return state,f_l,logits
 
 train=True
+cached_subj=[]
+training_loader = DataLoader(subjects_dataset, batch_size=1, num_workers=8)
+for subject in training_loader :
+    cached_subj.append(subject)
+
 
 for epoch in range(1, total_steps):
     dicee=0
     f_ll=0
-    for subject in subjects_dataset :
+    for subject in cached_subj :
         image=subject['image'][tio.DATA].numpy()
         label=subject['label'][tio.DATA].numpy()
         # print(f"#### {jnp.sum(label)} ")
-        state,dice ,f_l,ss=train_step(state, image,label,train)
+        state,f_l,logits=train_step(state, image,label,train)
+        dice=dice_metr(logits,label)
         dicee=dicee+dice
         f_ll=f_ll+f_l
     print(f"epoch {epoch} dice {dicee/len(subjects_dataset)} f_l {f_ll/len(subjects_dataset)} ")

@@ -1,8 +1,21 @@
 FROM nvcr.io/nvdlfwea/jax/jax:22.10-py3
 
+
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common \
+        build-essential \
+        curl \
+        git \
+        ffmpeg \
+        libjpeg-turbo8 
+
+
 RUN python3 -m  pip  install torch torchvision torchaudio torch-geometric --extra-index-url https://download.pytorch.org/whl/cpu
 
 RUN python3 -m  pip install \
+    numba \
+    cupy \
     black \
     pandas \
     numpy \
@@ -25,7 +38,11 @@ RUN python3 -m  pip install \
     optuna \
     # equinox \
     einops \
-    torchio
+    torchio \
+    jax-triton \
+    opencv-python
+    
+# RUN python3 -m  pip install  ffcv
 
 # RUN python3 -m  pip install monai-weekly
 
@@ -87,7 +104,7 @@ RUN mkdir -p "$GOPATH/src" "$GOPATH/bin" && chmod -R 777 "$GOPATH"
 
 RUN apt install graphviz
 RUN go install github.com/google/pprof@latest
-
+ENV XLA_PYTHON_CLIENT_MEM_FRACTION=0.87
 # ENV cudnn_version=8.6.0.163
 # ENV cuda_version=cuda11.6
 
