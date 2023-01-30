@@ -52,12 +52,19 @@ from my_jax_3d import SwinTransformer
 
 prng = jax.random.PRNGKey(42)
 
-feature_size  = 24 #by how long vector each image patch will be represented
+feature_size  = 12 #by how long vector each image patch will be represented
 in_chans=1
 depths= (2, 2, 2, 2)
 num_heads = (3, 3, 3, 3)
+#how much the window should be rolled
+shift_sizes= ((2,2,2),(0,0,0),(2,2,2),(0,0,0)  )
+#how much relative to original resolution (after embedding) should be reduced
+downsamples=(False,True,True,True)
+
+
+
 patch_size = (4,4,4)
-window_size = (4,4,4) # in my definition it is number of patches it holds
+window_size = (8,8,8) # in my definition it is number of patches it holds
 img_size = (1,1,256,256,128)
 
 def focal_loss(inputs, targets):
@@ -124,7 +131,9 @@ jax_swin= my_jax_3d.SwinTransformer(img_size=img_size
                 ,window_size=window_size
                 ,patch_size=patch_size
                 ,depths=depths
-                ,num_heads=num_heads                           
+                ,num_heads=num_heads
+                ,shift_sizes=shift_sizes
+                ,downsamples=downsamples                           
                 )
 
 total_steps=700

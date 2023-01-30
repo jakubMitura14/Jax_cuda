@@ -45,3 +45,4 @@ relative embedding can be used to try to avoid resampling
 
 3d relative position encoding 
 https://github.com/HEEHWANWANG/ABCD-3DCNN/blob/7b4dc0e132facfdd116ceb42eb026119a1a66e35/STEP_3_Self-Supervised-Learning/MAE_DDP/util/pos_embed.py
+

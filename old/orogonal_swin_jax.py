@@ -236,7 +236,7 @@ class SwinBlock(nn.Module):
 
     def get_att_mask(self, shift_size, window_size, height, width):
         """
-        depending on the size of the windo size and shift
+        depending on the size of the window size and shift
         it creates a mask to cancel out some of the entries
         """
         if shift_size > 0:

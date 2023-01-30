@@ -1,3 +1,7 @@
+Important
+https://github.com/ moabarar/qna
+
+
 better boundary detection
 https://arxiv.org/pdf/2210.04285v1.pdf
 
@@ -35,6 +39,11 @@ https://github.com/ayanglab/SwinMR
 
 Loss
 https://arxiv.org/abs/2010.01412
+
+optimazation
+NadamW - good to check
+https://www.google.com/url?sa=t&source=web&rct=j&url=https://arxiv.org/pdf/2211.09760&ved=2ahUKEwjH7Onm3b_8AhVLmIsKHYFVBfoQFnoECC4QAQ&usg=AOvVaw2NeKgrjFUVnJbZ1hDOWM-K
+https://www.google.com/url?sa=t&source=web&rct=j&url=https://arxiv.org/pdf/2007.01547&ved=2ahUKEwjhm6_gocD8AhUEx4sKHWH3DB8QFnoECBEQAQ&usg=AOvVaw174yvXW-FB3wtd5qYdRgle
 
 
 
