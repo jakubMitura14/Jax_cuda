@@ -27,7 +27,8 @@ from rotate_scale import applyTransform as applyTransform
 import dm_pix
 from dm_pix._src import interpolation
 from dm_pix._src import augment
-
+import functools
+from functools import partial
 
 data_dir='/root/data'
 train_images = sorted(
@@ -49,7 +50,8 @@ image = jnp.swapaxes(image, 0,2)
 # rotMat= rotate_3d(10,10,10)
 # applyTransform(image, rotMat)
 
-def rotate_3d(angle_x=0, angle_y=0, angle_z=0):
+@jax.jit
+def rotate_3d(angle_x=0.0, angle_y=0.0, angle_z=0.0):
     """
     Returns transformation matrix for 3d rotation.
     Args:
@@ -96,6 +98,7 @@ class RegularGridInterpolator:
         bounds_error=False,
         fill_value=jnp.nan
     ):
+        pass
         if method not in ("linear", "nearest"):
             raise ValueError(f"method {method!r} is not defined")
         self.method = method
@@ -121,16 +124,16 @@ class RegularGridInterpolator:
                     "of a type compatible with values"
                 )
 
-        for i, p in enumerate(points):
-            if not np.all(np.diff(p) > 0.):
-                ve = f"the points in dimension {i} must be strictly ascending"
-                raise ValueError(ve)
-            if not np.asarray(p).ndim == 1:
-                ve = f"the points in dimension {i} must be 1-dimensional"
-                raise ValueError(ve)
-            if not values.shape[i] == len(p):
-                ve = f"there are {len(p)} points and {values.shape[i]} values in dimension {i}"
-                raise ValueError(ve)
+        # for i, p in enumerate(points):
+        #     if not np.all(np.diff(p) > 0.):
+        #         ve = f"the points in dimension {i} must be strictly ascending"
+        #         raise ValueError(ve)
+        #     if not np.asarray(p).ndim == 1:
+        #         ve = f"the points in dimension {i} must be 1-dimensional"
+        #         raise ValueError(ve)
+        #     if not values.shape[i] == len(p):
+        #         ve = f"there are {len(p)} points and {values.shape[i]} values in dimension {i}"
+        #         raise ValueError(ve)
         if isinstance(points, jnp.ndarray):
             self.grid = points  # Do not unnecessarily copy arrays
         else:
@@ -218,11 +221,11 @@ class RegularGridInterpolator:
                 out_of_bounds += x > grid[-1]
         return indices, norm_distances, out_of_bounds
 
-trans_mat_inv = jnp.linalg.inv(rotate_3d(0.1,0.1,0.05)[0:3,0:3])
+Nz, Ny, Nx = image.shape
+@partial(jax.jit, static_argnames=['Nz','Ny','Nx'])
+def apply_affine(image,Nz, Ny, Nx):
+    trans_mat_inv = jnp.linalg.inv(rotate_3d(0.1,0.1,0.05)[0:3,0:3])
 
-@jax.jit
-def apply_affine(image,trans_mat_inv ):
-    Nz, Ny, Nx = image.shape
     x = jnp.linspace(0, Nx - 1, Nx)
     y = jnp.linspace(0, Ny - 1, Ny)
     z = jnp.linspace(0, Nz - 1, Nz)
@@ -242,21 +245,28 @@ def apply_affine(image,trans_mat_inv ):
     z_valid1 = zz_prime>=0
     z_valid2 = zz_prime<=Nz-1
     valid_voxel = x_valid1 * x_valid2 * y_valid1 * y_valid2 * z_valid1 * z_valid2
-    z_valid_idx, y_valid_idx, x_valid_idx = jnp.where(valid_voxel > 0)
 
-    image_transformed = jnp.zeros((Nz, Ny, Nx))
+    # z_valid_idx, y_valid_idx, x_valid_idx = jnp.where(valid_voxel > 0)
+    # bbb=jnp.where(valid_voxel > 0)
+    # print(f"valid_voxel {valid_voxel.shape} bbb {bbb[0].shape}")
+
+    # image_transformed = jnp.zeros((Nz, Ny, Nx))
 
     data_w_coor = RegularGridInterpolator((z, y, x), image)
-    interp_points = jnp.array([zz_prime[z_valid_idx, y_valid_idx, x_valid_idx],
-            yy_prime[z_valid_idx, y_valid_idx, x_valid_idx],
-            xx_prime[z_valid_idx, y_valid_idx, x_valid_idx]]).T
+    # interp_points = jnp.array([zz_prime[z_valid_idx, y_valid_idx, x_valid_idx],
+    #         yy_prime[z_valid_idx, y_valid_idx, x_valid_idx],
+    #         xx_prime[z_valid_idx, y_valid_idx, x_valid_idx]]).T
+    interp_points = jnp.array([zz_prime,yy_prime, xx_prime]).T    
     interp_result = data_w_coor(interp_points)
+    return interp_result
+    # image_transformed=image_transformed.at[z_valid_idx, y_valid_idx, x_valid_idx].set(interp_result)
+   
+    # return image_transformed
 
-    image_transformed=image_transformed.at[z_valid_idx, y_valid_idx, x_valid_idx].set(interp_result)
-    return image_transformed
+# apply_affine(image,Nz, Ny, Nx)
 
-image_transformed=apply_affine(image,trans_mat_inv)
-image_transformed = jnp.swapaxes(image_transformed, 0,2)
+image_transformed=apply_affine(image,Nz, Ny, Nx)
+# image_transformed = jnp.swapaxes(image_transformed, 0,2)
 
 toSave = sitk.GetImageFromArray(image_transformed)  
 toSave.SetSpacing(imagePrim.GetSpacing())
@@ -267,6 +277,9 @@ writer = sitk.ImageFileWriter()
 writer.KeepOriginalImageUIDOn()
 writer.SetFileName('/workspaces/Jax_cuda/old/sth.nii.gz')
 writer.Execute(toSave)    
+
+
+
 
 
 
