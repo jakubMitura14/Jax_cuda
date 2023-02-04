@@ -15,7 +15,7 @@ RUN python3 -m  pip  install torch torchvision torchaudio torch-geometric --extr
 
 RUN python3 -m  pip install \
     numba \
-    cupy \
+    # cupy \
     black \
     pandas \
     numpy \
@@ -40,8 +40,10 @@ RUN python3 -m  pip install \
     einops \
     torchio \
     jax-triton \
-    opencv-python
+    opencv-python \
+    dm-pix
     
+RUN python3 -m  pip install visu3d==1.4.0    
 # RUN python3 -m  pip install  ffcv
 
 # RUN python3 -m  pip install monai-weekly

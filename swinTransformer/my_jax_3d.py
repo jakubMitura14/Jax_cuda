@@ -499,7 +499,7 @@ class SwinTransformer(nn.Module):
         x1=self.apply_window_attention(x,self.window_attentions[1],True)
         x2=self.apply_window_attention(x1,self.window_attentions[2],False)
         x3=self.deconv_a(x2+self.convv(x1))
-        print(f"x {x.shape} x3 {x3.shape}")
+        # print(f"x {x.shape} x3 {x3.shape}")
         x3=self.deconv_c(x+x3)
         x3=self.after_window_deconv(x3)
         # x3=self.deconv_d(x3)

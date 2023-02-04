@@ -20,6 +20,10 @@ import torchio as tio
 import optax
 from flax.training import train_state  # Useful dataclass to keep train state
 from torch.utils.data import DataLoader
+import my_jax_3d as my_jax_3d
+from my_jax_3d import SwinTransformer
+
+
 
 data_dir='/root/data'
 train_images = sorted(
@@ -47,8 +51,6 @@ transform = tio.Compose(transforms)
 subjects_dataset = tio.SubjectsDataset(subjects_list_train, transform=transform)
 
 
-import my_jax_3d as my_jax_3d
-from my_jax_3d import SwinTransformer
 
 prng = jax.random.PRNGKey(42)
 
