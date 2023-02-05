@@ -222,9 +222,9 @@ class RegularGridInterpolator:
         return indices, norm_distances, out_of_bounds
 
 Nz, Ny, Nx = image.shape
+
 @partial(jax.jit, static_argnames=['Nz','Ny','Nx'])
-def apply_affine(image,Nz, Ny, Nx):
-    trans_mat_inv = jnp.linalg.inv(rotate_3d(0.1,0.1,0.05)[0:3,0:3])
+def apply_affine(image,trans_mat_inv,Nz, Ny, Nx):
 
     x = jnp.linspace(0, Nx - 1, Nx)
     y = jnp.linspace(0, Ny - 1, Ny)
@@ -238,13 +238,13 @@ def apply_affine(image,Nz, Ny, Nx):
     zz_prime = coor_prime[2] + z_center
 
 
-    x_valid1 = xx_prime>=0
-    x_valid2 = xx_prime<=Nx-1
-    y_valid1 = yy_prime>=0
-    y_valid2 = yy_prime<=Ny-1
-    z_valid1 = zz_prime>=0
-    z_valid2 = zz_prime<=Nz-1
-    valid_voxel = x_valid1 * x_valid2 * y_valid1 * y_valid2 * z_valid1 * z_valid2
+    # x_valid1 = xx_prime>=0
+    # x_valid2 = xx_prime<=Nx-1
+    # y_valid1 = yy_prime>=0
+    # y_valid2 = yy_prime<=Ny-1
+    # z_valid1 = zz_prime>=0
+    # z_valid2 = zz_prime<=Nz-1
+    # valid_voxel = x_valid1 * x_valid2 * y_valid1 * y_valid2 * z_valid1 * z_valid2
 
     # z_valid_idx, y_valid_idx, x_valid_idx = jnp.where(valid_voxel > 0)
     # bbb=jnp.where(valid_voxel > 0)
@@ -264,8 +264,11 @@ def apply_affine(image,Nz, Ny, Nx):
     # return image_transformed
 
 # apply_affine(image,Nz, Ny, Nx)
+trans_mat_inv = jnp.linalg.inv(rotate_3d(0.1,0.1,0.05)[0:3,0:3])
 
-image_transformed=apply_affine(image,Nz, Ny, Nx)
+image_transformed=apply_affine(image,trans_mat_inv,Nz, Ny, Nx)
+
+
 # image_transformed = jnp.swapaxes(image_transformed, 0,2)
 
 toSave = sitk.GetImageFromArray(image_transformed)  
