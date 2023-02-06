@@ -58,6 +58,19 @@ imagePrim=sitk.ReadImage(dictt['image'])
 image = sitk.GetArrayFromImage(imagePrim)
 image = jnp.swapaxes(image, 0,2)
 
+
+
+# aa=jnp.array([[1, 0, 0, 25],
+#   [0, 1, 0, 25],
+#   [0, 0, 1, 0],
+#   [  0, 0,    0, 1]])
+
+# matrix = aa #rotate_3d(angle_x, angle_y, angle_z)[0:3,0:3]
+
+# # Use the offset to place the rotation at the image center.
+# image_center = (jnp.asarray(image.shape+(0,)) - 1.) / 2.
+# offset = image_center - matrix @ image_center
+
 # Nx,Ny,Nz= image.shape
 # fullArr=jnp.arange(Nx)
 # fullArr=jnp.sin(fullArr*0.01)*200
@@ -72,7 +85,7 @@ def affine_transform(
     *,
     offset: Union[chex.Array, chex.Numeric] = 0.,
     order: int = 1,
-    mode: str = "nearest",
+    mode: str = "constant",
     cval: float = 0.0,
 ) -> chex.Array:
   """Applies an affine transformation given by matrix.
@@ -170,16 +183,20 @@ def affine_transform(
   indices = jnp.concatenate(
       [jnp.expand_dims(x, axis=-1) for x in meshgrid], axis=-1)
 
-  if matrix.shape == (4, 4) or matrix.shape == (3, 4):
-    offset = matrix[:image.ndim, image.ndim]
-    matrix = matrix[:image.ndim, :image.ndim]
+  zz, yy, xx = meshgrid
+  z_center, y_center,x_center= (jnp.asarray(image.shape) - 1.) / 2.
+  indices = jnp.array([xx - x_center, yy - y_center, zz - z_center])
 
-  coordinates = indices @ matrix.T
-  coordinates = jnp.moveaxis(coordinates, source=-1, destination=0)
+  # offset = matrix[:image.ndim, image.ndim]
+  # matrix = matrix[:image.ndim, :image.ndim]
+
+  coordinates = jnp.tensordot(matrix, indices, axes=((1), (0)))
+  # coordinates = indices @ jnp.linalg.inv(matrix).T
+  # coordinates = jnp.moveaxis(coordinates, source=-1, destination=0)
 
   # Alter coordinates to account for offset.
-  offset = jnp.full((3,), fill_value=offset)
-  coordinates += jnp.reshape(a=offset, newshape=(*offset.shape, 1, 1, 1))
+  # offset = jnp.full((3,), fill_value=offset)
+  # coordinates += jnp.reshape(a=offset, newshape=(*offset.shape, 1, 1, 1))
 
   interpolate_function = augment._get_interpolate_function(
       mode=mode,
@@ -246,19 +263,43 @@ def rotate(
     The rotated image.
   """
   # Calculate inverse transform matrix assuming clockwise rotation.
-  # c = jnp.cos(angle)
-  # s = jnp.sin(angle)
-  # matrix = jnp.array([[c, s, 0], [-s, c, 0], [0, 0, 1]])
+  rcx = jnp.cos(angle_x)
+  rsx = jnp.sin(angle_x)
+
+  rcy = jnp.cos(angle_y)
+  rsy = jnp.sin(angle_y) 
+  rcz = jnp.cos(angle_z)
+  rsz = jnp.sin(angle_z)    
+      
+  # matrix_x = jnp.array([[1,    0,   0, 0],
+  #                           [0,  rcx, rsx, 0],
+  #                           [0, -rsx, rcx, 0],
+  #                           [0,    0,   0, 1]])
+
+  # matrix_y = jnp.array([[rcy, 0, -rsy]
+  #                   , [ 0, 1,    0]
+  #                   , [rsy, 0,  rcy]])
+
+  # matrix_z = jnp.array([[rcz, rsz, 0]
+  #                   , [-rsz, rcz, 0]
+  #                   , [ 0,   0, 1]])                    
+
+  # aa=jnp.array([[1, 0, 0, 25],
+  #   [0, 1, 0, 25],
+  #  [0, 0, 1, 0]])
+
   matrix = rotate_3d(angle_x, angle_y, angle_z)[0:3,0:3]
 
   # Use the offset to place the rotation at the image center.
-  image_center = (jnp.asarray(image.shape) - 1.) / 2.
-  offset = image_center - matrix @ image_center
+  # image_center = (jnp.asarray(image.shape+(1,)) - 1.) / 2.
+  # offset = image_center - matrix @ image_center
 
-  return affine_transform(image, matrix, offset=offset, order=order, mode=mode,
+  return affine_transform(image, matrix, offset=0.0, order=order, mode=mode,
                           cval=cval)
+  # return affine_transform(image, matrix, offset=offset, order=order, mode=mode,
+  #                         cval=cval)
 
-image_transformed=rotate(image, 0.5,0.5,0.1)
+image_transformed=rotate(image, 0.0,0.0,0.0)
 
 # image = einops.rearrange(image,'h w d -> h w d 1')
 # image_transformed=elastic_deformation(key,image,alpha,sigma)

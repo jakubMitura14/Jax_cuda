@@ -65,16 +65,16 @@ def rotate_3d(angle_x=0.0, angle_y=0.0, angle_z=0.0):
     rcx = jnp.cos(angle_x)
     rsx = jnp.sin(angle_x)
     rotation_x = jnp.array([[1,    0,   0, 0],
-                    [0,  rcx, rsx, 0],
-                    [0, -rsx, rcx, 0],
-                    [0,    0,   0, 1]])
+                            [0,  rcx, rsx, 0],
+                            [0, -rsx, rcx, 0],
+                            [0,    0,   0, 1]])
 
     rcy = jnp.cos(angle_y)
     rsy = jnp.sin(angle_y)
     rotation_y = jnp.array([[rcy, 0, -rsy, 0],
-                    [  0, 1,    0, 0],
-                    [rsy, 0,  rcy, 0],
-                    [  0, 0,    0, 1]])
+                            [  0, 1,    0, 0],
+                            [rsy, 0,  rcy, 0],
+                            [  0, 0,    0, 1]])
 
     rcz = jnp.cos(angle_z)
     rsz = jnp.sin(angle_z)

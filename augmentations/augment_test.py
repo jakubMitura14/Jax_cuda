@@ -63,25 +63,46 @@ def rotate_3d(angle_x=0.0, angle_y=0.0, angle_z=0.0):
     """
     rcx = jnp.cos(angle_x)
     rsx = jnp.sin(angle_x)
+    # rotation_x = jnp.array([[1,    0,   0, 0],
+    #                 [0,  rcx, rsx, 0],
+    #                 [0, -rsx, rcx, 0],
+    #                 [0,    0,   0, 1]])
+
+    # rcy = jnp.cos(angle_y)
+    # rsy = jnp.sin(angle_y)
+    # rotation_y = jnp.array([[rcy, 0, -rsy, 0],
+    #                 [  0, 1,    0, 0],
+    #                 [rsy, 0,  rcy, 0],
+    #                 [  0, 0,    0, 1]])
+
+    # rcz = jnp.cos(angle_z)
+    # rsz = jnp.sin(angle_z)
+    # rotation_z = jnp.array([[ rcz, rsz, 0, 0],
+    #                 [-rsz, rcz, 0, 0],
+    #                 [   0,   0, 1, 0],
+    #                 [   0,   0, 0, 1]])
+    # matrix = rotation_x @ rotation_y @ rotation_z
+
     rotation_x = jnp.array([[1,    0,   0, 0],
-                    [0,  rcx, rsx, 0],
-                    [0, -rsx, rcx, 0],
+                    [0,  rcx, -rsx, 0],
+                    [0, rsx, rcx, 0],
                     [0,    0,   0, 1]])
 
     rcy = jnp.cos(angle_y)
     rsy = jnp.sin(angle_y)
-    rotation_y = jnp.array([[rcy, 0, -rsy, 0],
+    rotation_y = jnp.array([[rcy, 0, rsy, 0],
                     [  0, 1,    0, 0],
-                    [rsy, 0,  rcy, 0],
+                    [-rsy, 0,  rcy, 0],
                     [  0, 0,    0, 1]])
 
     rcz = jnp.cos(angle_z)
     rsz = jnp.sin(angle_z)
-    rotation_z = jnp.array([[ rcz, rsz, 0, 0],
-                    [-rsz, rcz, 0, 0],
+    rotation_z = jnp.array([[ rcz, -rsz, 0, 0],
+                    [rsz, rcz, 0, 0],
                     [   0,   0, 1, 0],
                     [   0,   0, 0, 1]])
     matrix = rotation_x @ rotation_y @ rotation_z
+
     return matrix
 
 
@@ -252,24 +273,29 @@ def apply_affine(image,trans_mat_inv,Nz, Ny, Nx):
 
     # image_transformed = jnp.zeros((Nz, Ny, Nx))
 
-    data_w_coor = RegularGridInterpolator((z, y, x), image)
+    # data_w_coor = RegularGridInterpolator((z, y, x), image)
     # interp_points = jnp.array([zz_prime[z_valid_idx, y_valid_idx, x_valid_idx],
     #         yy_prime[z_valid_idx, y_valid_idx, x_valid_idx],
     #         xx_prime[z_valid_idx, y_valid_idx, x_valid_idx]]).T
-    interp_points = jnp.array([zz_prime,yy_prime, xx_prime]).T    
-    interp_result = data_w_coor(interp_points)
+    interpolate_function = augment._get_interpolate_function(
+        mode="constant",
+        order=1,
+        cval=0.0,
+    )    
+    interp_points = jnp.array([zz_prime,yy_prime, xx_prime])#.T    
+    interp_result = interpolate_function(image, interp_points) #data_w_coor(interp_points)
     return interp_result
     # image_transformed=image_transformed.at[z_valid_idx, y_valid_idx, x_valid_idx].set(interp_result)
    
     # return image_transformed
 
 # apply_affine(image,Nz, Ny, Nx)
-trans_mat_inv = jnp.linalg.inv(rotate_3d(0.1,0.1,0.05)[0:3,0:3])
+trans_mat_inv = jnp.linalg.inv(rotate_3d(0.0,0.09,0.0)[0:3,0:3])
 
 image_transformed=apply_affine(image,trans_mat_inv,Nz, Ny, Nx)
 
 
-# image_transformed = jnp.swapaxes(image_transformed, 0,2)
+image_transformed = jnp.swapaxes(image_transformed, 0,2)
 
 toSave = sitk.GetImageFromArray(image_transformed)  
 toSave.SetSpacing(imagePrim.GetSpacing())
