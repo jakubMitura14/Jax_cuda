@@ -20,8 +20,8 @@ import torchio as tio
 import optax
 from flax.training import train_state  # Useful dataclass to keep train state
 from torch.utils.data import DataLoader
-import swinTransformer.my_jax_3d_regr as my_jax_3d_regr
-from swinTransformer.my_jax_3d_regr import SwinTransformer
+import my_jax_3d_regr as my_jax_3d_regr
+from my_jax_3d_regr import SwinTransformer
 import augmentations.simpleAffine as simpleAffine
 from flax.linen.linear import Dense
 
@@ -159,20 +159,21 @@ def create_train_state(learning_rate):
 state = create_train_state(0.0001)
 
 # @nn.jit
-def train_step(state, label,rot,train):
+def train_step(state, label,rot_lab,train):
   """Train for a single step."""
   def loss_fn(params):
-    logits = state.apply_fn({'params': params}, rot)
+    label_conc=jnp.concatenate((label,rot_lab),axis=1)
+    logits = state.apply_fn({'params': params}, label_conc)
     #print(f"logits {logits.shape} ::: rot shape {jnp.array([rot]).shape}")
     loss = focal_loss(logits, label)
     # print(f"loss {loss} ")
-    # loss= optax.l2_loss(logits, jnp.array([rot]))[0]
+    #loss= optax.l2_loss(logits, jnp.array([rot]))[0]
     return loss, logits
 
   grad_fn = jax.grad(loss_fn, has_aux=True)
   grads, logits = grad_fn(state.params)
   state = state.apply_gradients(grads=grads)
-  f_l=optax.l2_loss(logits, jnp.array([rot]))[0]
+  f_l=focal_loss(logits, label)
 
   return state,f_l,logits
 
@@ -196,10 +197,10 @@ for epoch in range(1, total_steps):
     for subject, rot_lab,rot in zip(cached_subj,rots_labs,rots ) :
         # image=subject['image'][tio.DATA].numpy()
         label=subject['label'][tio.DATA].numpy()
-        label=jnp.concatenate((label,rot_lab),axis=1)
+        # label=jnp.concatenate((label,rot_lab),axis=1)
         # print(f"label shape {label.shape}")
         # print(f"#### {jnp.sum(label)} ")
-        state,f_l,logits=train_step(state, label,rot,train)
+        state,f_l,logits=train_step(state, label,rot_lab,train)
         # dice=dice_metr(logits,label)
         # dicee=dicee+dice
         f_ll=f_ll+f_l

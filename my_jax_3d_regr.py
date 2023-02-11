@@ -11,6 +11,7 @@ from flax.linen import partitioning as nn_partitioning
 import jax
 from einops import rearrange
 from einops import einsum
+import augmentations.simpleAffine as simpleAffine
 
 remat = nn_partitioning.remat
 
@@ -444,6 +445,7 @@ class SwinTransformer(nn.Module):
     @nn.compact
     def __call__(self, x):
         # deterministic=not train
+        n, c, d, h, w=x.shape
         x=einops.rearrange(x, "n c d h w -> n d h w c")
         x=self.patch_embed(x)
 
@@ -457,7 +459,11 @@ class SwinTransformer(nn.Module):
         # x3=self.deconv_d(x3)
         # x3=self.deconv_e(x3)
         x3=self.conv_out(x3)
-        return self.final_dense(jnp.ravel(x3))
+        inner_rot =  self.final_dense(jnp.ravel(x3))
+        trans_mat_inv = jnp.linalg.inv(simpleAffine.rotate_3d(inner_rot[0],0.00,0.0)[0:3,0:3])
+        rot_lab=simpleAffine.apply_affine_rotation(x[0,0,:,:,:],trans_mat_inv,w,h,d)
+        return jnp.reshape(rot_lab,(1,1,64,64,32))      
+        
         # einops.rearrange(x3, "n d h w c-> n c d h w")
 
 
