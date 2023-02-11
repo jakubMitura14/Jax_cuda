@@ -1,4 +1,4 @@
-FROM nvcr.io/nvdlfwea/jax/jax:22.10-py3
+FROM nvcr.io/nvdlfwea/jax/jax:23.01-py3
 
 
 
@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 
 RUN python3 -m  pip  install torch torchvision torchaudio torch-geometric --extra-index-url https://download.pytorch.org/whl/cpu
+
+# RUN python3 -m pip install jaxlib --upgrade
+# RUN python3 -m pip install jax --upgrade
 
 RUN python3 -m  pip install \
     numba \

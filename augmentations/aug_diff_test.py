@@ -76,7 +76,7 @@ def apply_model(state, images, labels,rng):
     # print(f"aaaaaaaaaaaaaa {images.shape}")
     logits = state.apply_fn({'params': params}, images,rngs=dict(dropout=dropout_rng))
     
-    print(f"res {logits} gold {labels}")
+    # print(f"res {logits} gold {labels}")
     
     loss = jnp.mean(optax.l2_loss(logits, labels))
     return loss, logits
