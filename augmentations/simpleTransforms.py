@@ -120,17 +120,17 @@ def apply_affine_rotation_matrix(image,trans_mat_inv,Nx, Ny, Nz):
     return interp_result
     # image_transformed=image_transformed.at[z_valid_idx, y_valid_idx, x_valid_idx].set(interp_result)
 
-@partial(jax.jit, static_argnames=['rot_x','rot_y','rot_z'])
-def apply_rotation_single_chan(image,rot_x=0.00,rot_y=0.0,rot_z=0.0):
+# @partial(jax.jit, static_argnames=['rot_x','rot_y','rot_z'])
+def apply_rotation_single_chan(image,rotations):
     Nx,Ny,Nz = image.shape
-    trans_mat_inv = jnp.linalg.inv(rotate_3d(rot_x,rot_y,rot_z)[0:3,0:3])
+    trans_mat_inv = jnp.linalg.inv(rotate_3d(*rotations)[0:3,0:3])
     return apply_affine_rotation_matrix(image[:,:,:],trans_mat_inv,Nx,Ny,Nz)
 
 """
 We assume that transforms are applied without batch dimension and with channel last
 here we are just vmapping over channel dimension
 """
-apply_rotation = jax.vmap(apply_rotation_single_chan,in_axes=(-1),out_axes=(-1))
+apply_rotation = jax.vmap(apply_rotation_single_chan,in_axes=(-1,None),out_axes=(-1))
 
    
 
@@ -201,9 +201,6 @@ def elastic_deformation(
       for channel in range(image.shape[-1])
   ], axis=-1)
 
-  if channel_axis != -1:  # Set channel axis back to original index.
-    transformed_image = jnp.moveaxis(
-        transformed_image, source=-1, destination=channel_axis)
   return transformed_image
 
 
@@ -217,59 +214,43 @@ def gaussian_blur(
     """
     return image + amplitude * random.normal(key, image.shape)
 
-#### utility wrappers for transforms - where we can specify the probability of given transform
 
-def aug_elastic(image,key,prob,param_x,param_y,param_z):
-    if random.uniform(key) > prob:
-        return elastic_deformation(image,param_x,param_y,param_z)
-
-def aug_apply_rotation(image,key,prob,rot_x,rot_y,rot_z):
-    if random.uniform(key) > prob:
-        return apply_rotation_single_chan(image,rot_x,rot_y,rot_z)
-        
-def aug_apply_gaussian_blur(image,key,prob,amplitude):
-    if random.uniform(key) > prob:
-        return gaussian_blur(image,amplitude)        
-    
-def aug_apply_adjust_brightness(image,key,prob,amplitude):
-    if random.uniform(key) > prob:
-        return augment.adjust_brightness(image, amplitude)        
-
-def aug_apply_adjust_gamma(image,key,prob,amplitude):
-    if random.uniform(key) > prob:
-        return augment.adjust_gamma(image, amplitude)
-    
-def aug_flip_right_left(image,key,prob):
-    if random.uniform(key) > prob:
-        return jnp.flip(image, axis=0)    
-
-def aug_flip_anterior_posterior(image,key,prob):
-    if random.uniform(key) > prob:
-        return jnp.flip(image, axis=1)    
-
-def aug_flip_inferior_superior(image,key,prob):
-    if random.uniform(key) > prob:
-        return jnp.flip(image, axis=2)    
-
-
-# @partial(jax.jit, static_argnames=['param_dict','key'])
+# @partial(jax.jit, static_argnames=['key'])
+@jax.jit
 def main_augment(image,param_dict, key):
     """
     applies the augmentations according to the specified parameters and 
     the probability of applying them
+    select used instead of conditional becouse the false branch is basically the identity function
     """
-    keys= random.split(key,8)
-    if random.uniform(keys[0]) > param_dict["elastic"]["p"],:
-        return elastic_deformation(image,param_x,param_y,param_z)
+    image_t=image
+    keys= random.split(key,9)
+    print(f"a {image_t.shape}")
+    image_t=jax.lax.select((random.uniform(keys[0]) <= param_dict["elastic"]["p"])
+                            ,elastic_deformation(image_t,param_dict["elastic"]["param_x"], param_dict["elastic"]["param_y"], param_dict["elastic"]["param_z"])
+                            ,image_t)
 
-    image_t= aug_elastic(image,keys[0],param_dict["elastic"]["p"], param_dict["elastic"]["param_x"], param_dict["elastic"]["param_y"], param_dict["elastic"]["param_z"] )
-    image_t= aug_apply_rotation(image_t,keys[1],param_dict["rotation"]["p"],param_dict["rotation"]["rot_x"],param_dict["rotation"]["rot_y"],param_dict["rotation"]["rot_z"] )
-    image_t= aug_apply_gaussian_blur(image_t,keys[2],param_dict["gaussian_blur"]["p"],param_dict["gaussian_blur"]["amplitude"])
-    image_t= aug_apply_adjust_brightness(image_t,keys[3],param_dict["adjust_brightness"]["p"],param_dict["adjust_brightness"]["amplitude"])
-    image_t= aug_apply_adjust_gamma(image_t,keys[4],param_dict["adjust_gamma"]["p"],param_dict["adjust_gamma"]["amplitude"])
-    image_t= aug_flip_right_left(image_t,keys[5],param_dict["flip_right_left"]["p"])
-    image_t= aug_flip_anterior_posterior(image_t,keys[6],param_dict["flip_anterior_posterior"]["p"])
-    image_t= aug_flip_inferior_superior(image_t,keys[7],param_dict["flip_inferior_superior"]["p"])
+    image_t=jax.lax.select((random.uniform(keys[1]) <= param_dict["rotation"]["p"])
+                            ,apply_rotation(image_t,jnp.array([param_dict["rotation"]["rot_x"],param_dict["rotation"]["rot_y"],param_dict["rotation"]["rot_z"]]) )
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[2]) <= param_dict["gaussian_blur"]["p"])
+                            ,gaussian_blur(image_t,keys[8],param_dict["gaussian_blur"]["amplitude"])
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[3]) <= param_dict["adjust_brightness"]["p"])
+                            ,augment.adjust_brightness(image_t,param_dict["adjust_brightness"]["amplitude"])
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[4]) <= param_dict["adjust_gamma"]["p"])
+                            ,augment.adjust_gamma(image_t,param_dict["adjust_gamma"]["amplitude"])
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[5]) <= param_dict["flip_right_left"]["p"])
+                            ,jnp.flip(image_t, axis=0)
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[6]) <= param_dict["flip_anterior_posterior"]["p"])
+                            ,jnp.flip(image_t, axis=1)
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[7]) <= param_dict["flip_inferior_superior"]["p"])
+                            ,jnp.flip(image_t, axis=2)
+                            ,image_t)
     return image_t
 
 

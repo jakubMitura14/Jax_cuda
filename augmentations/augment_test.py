@@ -99,6 +99,7 @@ param_dict={
 "flip_inferior_superior":{"p":1.0}
 }
 
+image= jnp.array(image)
 image_transformed= simpleTransforms.main_augment(image,param_dict, key)
 # image_transformed= jax.lax.stop_gradient(augment_a(image,key))
 
