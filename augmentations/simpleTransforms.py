@@ -217,3 +217,60 @@ def gaussian_blur(
     """
     return image + amplitude * random.normal(key, image.shape)
 
+#### utility wrappers for transforms - where we can specify the probability of given transform
+
+def aug_elastic(image,key,prob,param_x,param_y,param_z):
+    if random.uniform(key) > prob:
+        return elastic_deformation(image,param_x,param_y,param_z)
+
+def aug_apply_rotation(image,key,prob,rot_x,rot_y,rot_z):
+    if random.uniform(key) > prob:
+        return apply_rotation_single_chan(image,rot_x,rot_y,rot_z)
+        
+def aug_apply_gaussian_blur(image,key,prob,amplitude):
+    if random.uniform(key) > prob:
+        return gaussian_blur(image,amplitude)        
+    
+def aug_apply_adjust_brightness(image,key,prob,amplitude):
+    if random.uniform(key) > prob:
+        return augment.adjust_brightness(image, amplitude)        
+
+def aug_apply_adjust_gamma(image,key,prob,amplitude):
+    if random.uniform(key) > prob:
+        return augment.adjust_gamma(image, amplitude)
+    
+def aug_flip_right_left(image,key,prob):
+    if random.uniform(key) > prob:
+        return jnp.flip(image, axis=0)    
+
+def aug_flip_anterior_posterior(image,key,prob):
+    if random.uniform(key) > prob:
+        return jnp.flip(image, axis=1)    
+
+def aug_flip_inferior_superior(image,key,prob):
+    if random.uniform(key) > prob:
+        return jnp.flip(image, axis=2)    
+
+
+# @partial(jax.jit, static_argnames=['param_dict','key'])
+def main_augment(image,param_dict, key):
+    """
+    applies the augmentations according to the specified parameters and 
+    the probability of applying them
+    """
+    keys= random.split(key,8)
+    if random.uniform(keys[0]) > param_dict["elastic"]["p"],:
+        return elastic_deformation(image,param_x,param_y,param_z)
+
+    image_t= aug_elastic(image,keys[0],param_dict["elastic"]["p"], param_dict["elastic"]["param_x"], param_dict["elastic"]["param_y"], param_dict["elastic"]["param_z"] )
+    image_t= aug_apply_rotation(image_t,keys[1],param_dict["rotation"]["p"],param_dict["rotation"]["rot_x"],param_dict["rotation"]["rot_y"],param_dict["rotation"]["rot_z"] )
+    image_t= aug_apply_gaussian_blur(image_t,keys[2],param_dict["gaussian_blur"]["p"],param_dict["gaussian_blur"]["amplitude"])
+    image_t= aug_apply_adjust_brightness(image_t,keys[3],param_dict["adjust_brightness"]["p"],param_dict["adjust_brightness"]["amplitude"])
+    image_t= aug_apply_adjust_gamma(image_t,keys[4],param_dict["adjust_gamma"]["p"],param_dict["adjust_gamma"]["amplitude"])
+    image_t= aug_flip_right_left(image_t,keys[5],param_dict["flip_right_left"]["p"])
+    image_t= aug_flip_anterior_posterior(image_t,keys[6],param_dict["flip_anterior_posterior"]["p"])
+    image_t= aug_flip_inferior_superior(image_t,keys[7],param_dict["flip_inferior_superior"]["p"])
+    return image_t
+
+
+

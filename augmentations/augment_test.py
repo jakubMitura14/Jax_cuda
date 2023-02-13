@@ -73,23 +73,34 @@ rot_z= 0.1
 image = einops.rearrange(image,'h w d -> h w d 1')
 
 # we can stop gradient via jax.lax.stop_gradient
-@jax.jit
-def augment_a(image,key):
-    image_transformed=elastic_deformation(image,param_x,param_y,param_z)
-    image_transformed= apply_rotation(image_transformed)
-    image_transformed=augment.adjust_brightness(image_transformed, 0.5)
-    image_transformed=augment.adjust_contrast(image_transformed, 0.5)
-    #flip left right
-    image_transformed=jnp.flip(image, axis=0)
-    image_transformed=simpleTransforms.gaussian_blur(image,key)
+# @jax.jit
+# def augment_a(image,key):
+#     image_transformed=elastic_deformation(image,param_x,param_y,param_z)
+#     image_transformed= apply_rotation(image_transformed)
+#     image_transformed=augment.adjust_brightness(image_transformed, 0.5)
+#     image_transformed=augment.adjust_contrast(image_transformed, 0.5)
+#     #flip left right
+#     image_transformed=jnp.flip(image, axis=0)
+#     image_transformed=simpleTransforms.gaussian_blur(image,key)
    
-    return image_transformed
+#     return image_transformed
 
 
 
 key = random.PRNGKey(1701)
+param_dict={
+"elastic":{"p":1.0,"param_x":param_x,"param_y":param_y,"param_z":param_z },
+"rotation":{"p":1.0,"rot_x":rot_x,"rot_y":rot_y,"rot_z":rot_z },
+"gaussian_blur":{"p":1.0,"amplitude":20},
+"adjust_brightness":{"p":1.0,"amplitude":0.5},
+"adjust_gamma":{"p":1.0,"amplitude":0.5},
+"flip_right_left":{"p":1.0},
+"flip_anterior_posterior":{"p":1.0},
+"flip_inferior_superior":{"p":1.0}
+}
 
-image_transformed= jax.lax.stop_gradient(augment_a(image,key))
+image_transformed= simpleTransforms.main_augment(image,param_dict, key)
+# image_transformed= jax.lax.stop_gradient(augment_a(image,key))
 
 print(f" image_transformed {image_transformed.shape} ")
 
@@ -106,3 +117,5 @@ writer = sitk.ImageFileWriter()
 writer.KeepOriginalImageUIDOn()
 writer.SetFileName('/workspaces/Jax_cuda/old/sth.nii.gz')
 writer.Execute(toSave)    
+
+

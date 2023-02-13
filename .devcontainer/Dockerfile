@@ -17,43 +17,45 @@ RUN python3 -m  pip  install torch torchvision torchaudio torch-geometric --extr
 # RUN python3 -m pip install jax --upgrade
 
 RUN python3 -m  pip install \
-    numba \
+    numba==0.56.4+1.g772622d0d\
     # cupy \
-    black \
-    pandas \
-    numpy \
-    comet-ml \
-    h5py \
-    SimpleITK \
-    batchgenerators \
-    dask \
-    nibabel \
-    SimpleITK \
+    black==23.1.0\
+    pandas==1.5.2 \
+    numpy==1.22.2 \
+    comet-ml==3.32.1 \
+    h5py==3.6.0 \
+    SimpleITK==2.2.1\
+    batchgenerators==0.24 \
+    dask==2022.11.1 \
+    nibabel==5.0.0\
     # intensity-normalization[ants] \
     # warp-lang \
-    report_guided_annotation \
+    report_guided_annotation==0.2.7\
     # ott-jax \ 
     # evojax[extra] \
     # jraph \
-    flax \
-    toolz \
-    ipyparallel \
-    optuna \
+    flax==0.6.3 \
+    toolz==0.12.0\
+    ipyparallel==8.4.1\
+    optuna==3.1.0\
     # equinox \
-    einops \
-    torchio \
-    jax-triton \
-    opencv-python \
-    dm-pix
+    einops==0.6.0\
+    torchio==0.18.87 \
+    jax-triton==0.1.2 \
+    opencv-python==4.7.0.68 \
+    dm-pix==0.3.4 \
+    visu3d==1.4.0 \
+    #https://stackoverflow.com/questions/63938552/how-to-run-tensorboard-in-vscode
+    tensorboard-plugin-profile 
     
-RUN python3 -m  pip install visu3d==1.4.0    
+# RUN python3 -m  pip install visu3d==1.4.0    
 # RUN python3 -m  pip install  ffcv
 
 # RUN python3 -m  pip install monai-weekly
 
 
-RUN python3 -m pip uninstall -y horovod
-RUN HOROVOD_WITH_PYTORCH=1 python3 -m  pip install --no-cache-dir horovod[pytorch]
+# RUN python3 -m pip uninstall -y horovod
+# RUN HOROVOD_WITH_PYTORCH=1 python3 -m  pip install --no-cache-dir horovod[pytorch]
 
 RUN git clone https://github.com/SuperElastix/SimpleElastix ${HOME}/externalRepos/elastix
 
