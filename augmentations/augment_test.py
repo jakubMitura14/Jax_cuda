@@ -65,20 +65,38 @@ param_x=jnp.array([[4,0.1],[6,0.01]])
 param_y=jnp.array([[4,0.1],[6,0.01]])
 param_z=jnp.array([[2,0.01],[2,0.001]])
 
+rot_x= 0.3
+rot_y= 0.1
+rot_z= 0.1
+
 
 image = einops.rearrange(image,'h w d -> h w d 1')
-image_transformed=elastic_deformation(image,param_x,param_y,param_z)
-print(f" image_transformed aa  {image_transformed.shape} ")
 
-image_transformed=apply_rotation(image_transformed)
-# image_transformed=simpleTransforms.apply_rotation_single_chan(image_transformed[:,:,:,0])
+# we can stop gradient via jax.lax.stop_gradient
+@jax.jit
+def augment_a(image,key):
+    image_transformed=elastic_deformation(image,param_x,param_y,param_z)
+    image_transformed= apply_rotation(image_transformed)
+    image_transformed=augment.adjust_brightness(image_transformed, 0.5)
+    image_transformed=augment.adjust_contrast(image_transformed, 0.5)
+    #flip left right
+    image_transformed=jnp.flip(image, axis=0)
+    image_transformed=simpleTransforms.gaussian_blur(image,key)
+   
+    return image_transformed
+
+
+
+key = random.PRNGKey(1701)
+
+image_transformed= jax.lax.stop_gradient(augment_a(image,key))
 
 print(f" image_transformed {image_transformed.shape} ")
 
 
+image_transformed = jnp.swapaxes(image_transformed, 0,2)
 
 ##transforming just to get back waht itk likes
-image_transformed = jnp.swapaxes(image_transformed, 0,2)
 toSave = sitk.GetImageFromArray(image_transformed)  
 toSave.SetSpacing(imagePrim.GetSpacing())
 toSave.SetOrigin(imagePrim.GetOrigin())

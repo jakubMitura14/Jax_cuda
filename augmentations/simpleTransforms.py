@@ -95,14 +95,14 @@ def rotate_3d(angle_x=0.0, angle_y=0.0, angle_z=0.0):
     return matrix
 
 
-@partial(jax.jit, static_argnames=['Nz','Ny','Nx'])
-def apply_affine_rotation_matrix(image,trans_mat_inv,Nz, Ny, Nx):
+@partial(jax.jit, static_argnames=['Nx','Ny','Nz'])
+def apply_affine_rotation_matrix(image,trans_mat_inv,Nx, Ny, Nz):
 
     x = jnp.linspace(0, Nx - 1, Nx)
     y = jnp.linspace(0, Ny - 1, Ny)
     z = jnp.linspace(0, Nz - 1, Nz)
-    zz, yy, xx = jnp.meshgrid(z, y, x, indexing='ij')
-    z_center, y_center,x_center= (jnp.asarray(image.shape) - 1.) / 2.
+    xx, yy, zz = jnp.meshgrid(x, y, z, indexing='ij')
+    x_center, y_center,z_center= (jnp.asarray(image.shape) - 1.) / 2.
     coor = jnp.array([xx - x_center, yy - y_center, zz - z_center])
     coor_prime = jnp.tensordot(trans_mat_inv, coor, axes=((1), (0)))
     xx_prime = coor_prime[0] + x_center
@@ -115,7 +115,7 @@ def apply_affine_rotation_matrix(image,trans_mat_inv,Nz, Ny, Nx):
         order=1,
         cval=0.0,
     )    
-    interp_points = jnp.array([zz_prime,yy_prime, xx_prime])#.T    
+    interp_points = jnp.array([xx_prime,yy_prime, zz_prime])#.T    
     interp_result = interpolate_function(image, interp_points) #data_w_coor(interp_points)
     return interp_result
     # image_transformed=image_transformed.at[z_valid_idx, y_valid_idx, x_valid_idx].set(interp_result)
@@ -130,7 +130,7 @@ def apply_rotation_single_chan(image,rot_x=0.00,rot_y=0.0,rot_z=0.0):
 We assume that transforms are applied without batch dimension and with channel last
 here we are just vmapping over channel dimension
 """
-apply_rotation = jax.vmap(apply_rotation_single_chan,in_axes=(-1))
+apply_rotation = jax.vmap(apply_rotation_single_chan,in_axes=(-1),out_axes=(-1))
 
    
 
@@ -205,4 +205,15 @@ def elastic_deformation(
     transformed_image = jnp.moveaxis(
         transformed_image, source=-1, destination=channel_axis)
   return transformed_image
+
+
+def gaussian_blur(
+    image: chex.Array,
+    key,
+    amplitude = 50
+) -> chex.Array:
+    """
+    from https://jax.readthedocs.io/en/latest/notebooks/convolutions.html
+    """
+    return image + amplitude * random.normal(key, image.shape)
 
