@@ -49,6 +49,7 @@ from dm_pix._src import interpolation
 from dm_pix._src import augment
 import functools
 from functools import partial
+import numpyro.distributions as dist
 
 
 """
@@ -207,12 +208,16 @@ def elastic_deformation(
 def gaussian_blur(
     image: chex.Array,
     key,
-    amplitude = 50
+    mean,
+    var
 ) -> chex.Array:
     """
     from https://jax.readthedocs.io/en/latest/notebooks/convolutions.html
     """
-    return image + amplitude * random.normal(key, image.shape)
+    normmm=dist.Normal(loc=mean, scale=var)
+    normmm.sample(key,image.shape)
+    
+    return image + normmm.sample(key,image.shape)
 
 
 # @partial(jax.jit, static_argnames=['key'])
@@ -225,16 +230,12 @@ def main_augment(image,param_dict, key):
     """
     image_t=image
     keys= random.split(key,9)
-    print(f"a {image_t.shape}")
     image_t=jax.lax.select((random.uniform(keys[0]) <= param_dict["elastic"]["p"])
                             ,elastic_deformation(image_t,param_dict["elastic"]["param_x"], param_dict["elastic"]["param_y"], param_dict["elastic"]["param_z"])
                             ,image_t)
 
     image_t=jax.lax.select((random.uniform(keys[1]) <= param_dict["rotation"]["p"])
                             ,apply_rotation(image_t,jnp.array([param_dict["rotation"]["rot_x"],param_dict["rotation"]["rot_y"],param_dict["rotation"]["rot_z"]]) )
-                            ,image_t)
-    image_t=jax.lax.select((random.uniform(keys[2]) <= param_dict["gaussian_blur"]["p"])
-                            ,gaussian_blur(image_t,keys[8],param_dict["gaussian_blur"]["amplitude"])
                             ,image_t)
     image_t=jax.lax.select((random.uniform(keys[3]) <= param_dict["adjust_brightness"]["p"])
                             ,augment.adjust_brightness(image_t,param_dict["adjust_brightness"]["amplitude"])
@@ -250,6 +251,9 @@ def main_augment(image,param_dict, key):
                             ,image_t)
     image_t=jax.lax.select((random.uniform(keys[7]) <= param_dict["flip_inferior_superior"]["p"])
                             ,jnp.flip(image_t, axis=2)
+                            ,image_t)
+    image_t=jax.lax.select((random.uniform(keys[2]) <= param_dict["gaussian_blur"]["p"])
+                            ,gaussian_blur(image_t,keys[8],param_dict["gaussian_blur"]["mean"],param_dict["gaussian_blur"]["var"])
                             ,image_t)
     return image_t
 

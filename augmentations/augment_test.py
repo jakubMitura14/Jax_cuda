@@ -42,6 +42,7 @@ from jax import random
 import simpleTransforms
 from simpleTransforms import elastic_deformation
 from simpleTransforms import apply_rotation
+import numpyro.distributions as dist
 
 key = random.PRNGKey(42)
 
@@ -66,11 +67,16 @@ param_y=jnp.array([[4,0.1],[6,0.01]])
 param_z=jnp.array([[2,0.01],[2,0.001]])
 
 rot_x= 0.3
-rot_y= 0.1
-rot_z= 0.1
+rot_y= 0.01
+rot_z= 0.01
 
 
 image = einops.rearrange(image,'h w d -> h w d 1')
+
+# key = random.PRNGKey(170)
+# normmm=dist.Normal(loc=10.0, scale=1.0)
+# normmm.sample(key, (2,2,2))
+
 
 # we can stop gradient via jax.lax.stop_gradient
 # @jax.jit
@@ -87,19 +93,29 @@ image = einops.rearrange(image,'h w d -> h w d 1')
 
 
 
+# Multiple augmentations have been proposed for lymphoma segmentation 
+# for example random rotation with the range (−15, +15); 
+# random gamma transformation with the range (0.70, 1.50), 
+# p = 0.30; random brightness transformation with the range (0.75, 1.25),
+#  sigma = 0.10; and 
+#  random flip p = 0.5 \cite{Ye_2022}. 
+
 key = random.PRNGKey(1701)
 param_dict={
 "elastic":{"p":1.0,"param_x":param_x,"param_y":param_y,"param_z":param_z },
 "rotation":{"p":1.0,"rot_x":rot_x,"rot_y":rot_y,"rot_z":rot_z },
-"gaussian_blur":{"p":1.0,"amplitude":20},
+"gaussian_blur":{"p":1.0,"mean":0.001,"var":0.01},
 "adjust_brightness":{"p":1.0,"amplitude":0.5},
-"adjust_gamma":{"p":1.0,"amplitude":0.5},
+"adjust_gamma":{"p":1.0,"amplitude":0.8},
 "flip_right_left":{"p":1.0},
 "flip_anterior_posterior":{"p":1.0},
 "flip_inferior_superior":{"p":1.0}
 }
 
 image= jnp.array(image)
+#normalisation
+image=(image - image.min()) / (image.max() - image.min())
+
 image_transformed= simpleTransforms.main_augment(image,param_dict, key)
 # image_transformed= jax.lax.stop_gradient(augment_a(image,key))
 

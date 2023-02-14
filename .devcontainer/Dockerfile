@@ -46,7 +46,8 @@ RUN python3 -m  pip install \
     dm-pix==0.3.4 \
     visu3d==1.4.0 \
     #https://stackoverflow.com/questions/63938552/how-to-run-tensorboard-in-vscode
-    tensorboard-plugin-profile 
+    tensorboard-plugin-profile
+RUN python3 -m  pip install numpyro[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
     
 # RUN python3 -m  pip install visu3d==1.4.0    
 # RUN python3 -m  pip install  ffcv
